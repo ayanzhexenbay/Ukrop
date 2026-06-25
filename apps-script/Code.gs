@@ -59,7 +59,7 @@ function doPost(e) {
     try {
       const file = DriveApp.getFileById(FILE_ID);
       file.setContent(body.content);
-      return jsonResponse({ ok: true, message: 'Сохранено на Google Drive' });
+      return jsonResponse({ ok: true, action: 'save', message: 'Сохранено на Google Drive' });
     } catch (err) {
       return jsonResponse({ ok: false, error: 'Ошибка сохранения: ' + err.message });
     }

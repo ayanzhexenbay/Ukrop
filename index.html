@@ -42,6 +42,38 @@
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
   const BDAY_KEYS = ['birthday', 'Birthday', 'birthdate', 'День рождения', 'dob'];
   const SKIP_LABEL_KEYS = ['zOrder', 'Expanded', 'url', 'description', 'UserTags'];
+  const Y_JSON_NS = 'http://www.yworks.com/xml/yfiles-common/3.0';
+
+  function isJsonElement(el) {
+    if (!el) return false;
+    const ln = (el.localName || '').toLowerCase();
+    const tn = (el.tagName || '').toLowerCase();
+    return ln === 'json' || tn === 'y:json' || tn.endsWith(':json');
+  }
+
+  function findJsonEl(container) {
+    if (!container) return null;
+    for (const e of container.getElementsByTagName('*')) {
+      if (isJsonElement(e)) return e;
+    }
+    return null;
+  }
+
+  function ensureJsonEl(dataEl, doc) {
+    let jsonEl = findJsonEl(dataEl);
+    if (jsonEl) return jsonEl;
+    if (doc.createElementNS) {
+      try {
+        jsonEl = doc.createElementNS(Y_JSON_NS, 'y:Json');
+      } catch {
+        jsonEl = doc.createElement('y:Json');
+      }
+    } else {
+      jsonEl = doc.createElement('y:Json');
+    }
+    dataEl.appendChild(jsonEl);
+    return jsonEl;
+  }
 
   function extractYEdLabel(nodeEl) {
     const all = nodeEl.getElementsByTagName('*');
@@ -91,7 +123,7 @@
 
   function readJsonFromDataEl(dataEl) {
     if (!dataEl) return {};
-    const jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
+    const jsonEl = findJsonEl(dataEl);
     const text = (jsonEl ? jsonEl.textContent : dataEl.textContent || '').trim();
     if (!text) return {};
     try { return JSON.parse(text); } catch { return {}; }
@@ -106,22 +138,54 @@
     const wrapper = readJsonFromDataEl(dataEl);
     if (!wrapper.ukropView) return;
     delete wrapper.ukropView;
-    let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
-    if (!jsonEl) {
-      jsonEl = STATE.xmlDoc.createElement('y:Json');
-      dataEl.appendChild(jsonEl);
-    }
+    const jsonEl = ensureJsonEl(dataEl, STATE.xmlDoc);
     jsonEl.textContent = JSON.stringify(wrapper);
   }
 
   function splitCoupleName(label) {
     const parts = label.split(/\s*[-–—/|]\s*|\s+и\s+/i).map(s => s.trim()).filter(Boolean);
-    return parts.length >= 2 ? parts.slice(0, 2) : null;
+    if (parts.length < 2) return null;
+    if (parts.length === 2 && /^\d{4}$/.test(parts[1])) return null;
+    return parts.slice(0, 2);
+  }
+
+  function cleanPersonLabel(label) {
+    const s = String(label || '').trim();
+    const m = s.match(/^(.+?)[-–—](\d{4})$/);
+    return m ? m[1].trim() : s;
   }
 
   function normalizeUkropPeople(ukrop) {
     if (!ukrop?.people) return;
     ukrop.people.forEach(p => { delete p.role; });
+  }
+
+  function normalizeUkropType(ukrop) {
+    if (!ukrop?.people) return ukrop;
+    normalizeUkropPeople(ukrop);
+    if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
+      const p0 = ukrop.people[0];
+      const p1 = ukrop.people[1];
+      const n0 = (p0.name || '').trim();
+      const n1 = (p1.name || '').trim();
+      if (!n1 || /^\d{4}$/.test(n1)) {
+        ukrop.type = 'person';
+        ukrop.people = [{ ...p0, name: n0 || cleanPersonLabel(n1) || '?' }];
+      }
+    }
+    return ukrop;
+  }
+
+  function primaryBirthday(ukrop) {
+    if (!ukrop?.people?.length) return '';
+    if (ukrop.type === 'person') return ukrop.people[0].birthday || '';
+    return ukrop.people.map(p => p.birthday).find(Boolean) || '';
+  }
+
+  function syncLegacyBirthday(nodeEl, ukrop) {
+    if (!STATE.xmlDoc) return;
+    const kid = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
+    setNodeData(nodeEl, kid, primaryBirthday(ukrop));
   }
 
   function migrateLabelToUkrop(label, birthday) {
@@ -137,7 +201,7 @@
     }
     return {
       type: 'person',
-      people: [{ id: genPersonId(), name: label, gender: '', birthday: birthday || '' }],
+      people: [{ id: genPersonId(), name: cleanPersonLabel(label), gender: '', birthday: birthday || '' }],
     };
   }
 
@@ -146,9 +210,11 @@
     const dataEl = nodeEl.querySelector(`data[key="${kid}"]`);
     const wrapper = readJsonFromDataEl(dataEl);
     if (wrapper.ukrop && Array.isArray(wrapper.ukrop.people) && wrapper.ukrop.people.length) {
-      const ukrop = wrapper.ukrop;
+      const ukrop = normalizeUkropType(wrapper.ukrop);
       ukrop.people.forEach(p => { if (!p.id) p.id = genPersonId(); });
-      normalizeUkropPeople(ukrop);
+      if (birthday && ukrop.type === 'person' && ukrop.people[0] && !ukrop.people[0].birthday) {
+        ukrop.people[0].birthday = birthday;
+      }
       return ukrop;
     }
     const ukrop = migrateLabelToUkrop(label, birthday);
@@ -198,13 +264,10 @@
     }
     const wrapper = readJsonFromDataEl(dataEl);
     wrapper.ukrop = ukrop;
-    let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
-    if (!jsonEl) {
-      jsonEl = nodeEl.ownerDocument.createElement('y:Json');
-      dataEl.appendChild(jsonEl);
-    }
+    const jsonEl = ensureJsonEl(dataEl, nodeEl.ownerDocument);
     jsonEl.textContent = JSON.stringify(wrapper);
     setYEdLabel(nodeEl, ukropYEdLabel(ukrop));
+    syncLegacyBirthday(nodeEl, ukrop);
   }
 
   function collectAllPeople() {
@@ -247,15 +310,54 @@
     return text;
   }
 
+  function isSaveResponse(data) {
+    return data && data.ok && (
+      data.action === 'save' || data.message === 'Сохранено на Google Drive'
+    );
+  }
+
+  function postAppsScriptJson(url, payload) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+      xhr.onload = () => {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { resolve(null); }
+      };
+      xhr.onerror = () => reject(new Error('Сетевая ошибка при сохранении'));
+      xhr.send(payload);
+    });
+  }
+
   async function saveGraphML(code, content) {
     const base = window.UKROP_CONFIG.APPS_SCRIPT_URL;
-    const res = await fetch(base, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'save', code, content }),
-    });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Ошибка сохранения');
-    return data;
+    const payload = JSON.stringify({ action: 'save', code, content });
+    let lastErr = new Error('Ошибка сохранения');
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let data;
+      try {
+        data = await postAppsScriptJson(base, payload);
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+        throw lastErr;
+      }
+      if (isSaveResponse(data)) return data;
+      if (data && data.ok) {
+        lastErr = new Error('Файл не был сохранён на Drive. Нажмите «Сохранить» ещё раз.');
+      } else if (data && data.error) {
+        lastErr = new Error(data.error);
+      } else {
+        lastErr = new Error('Некорректный ответ сервера. Попробуйте ещё раз.');
+      }
+      if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+    }
+    throw lastErr;
   }
 
   // ─── GraphML ───
@@ -414,7 +516,7 @@
   function updateNodeUkrop(id, ukrop) {
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
-    normalizeUkropPeople(ukrop);
+    normalizeUkropType(ukrop);
     writeUkropToNode(node.el, ukrop, STATE.keyMap);
     node.ukrop = ukrop;
     node.label = ukropDisplayLabel(ukrop);
@@ -460,7 +562,65 @@
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
     const ele = STATE.cy.getElementById(id);
-    if (ele.nonempty()) ele.data(nodeCyData(node));
+    if (ele.nonempty()) {
+      ele.data(nodeCyData(node));
+      setupHtmlLabels(STATE.cy);
+    }
+  }
+
+  function applyEditPanel(nodeId) {
+    const node = STATE.nodes.find(n => n.id === nodeId);
+    if (!node) return { ok: false };
+
+    const ukrop = JSON.parse(JSON.stringify(node.ukrop));
+
+    if (document.getElementById('p0-name') && document.getElementById('p1-name')) {
+      if (ukrop.type !== 'couple' || ukrop.people.length < 2) return { ok: false };
+      const p0 = ukrop.people[0];
+      const p1 = ukrop.people[1];
+      p0.name = document.getElementById('p0-name').value.trim();
+      p1.name = document.getElementById('p1-name').value.trim();
+      p0.birthday = document.getElementById('p0-bday').value;
+      p1.birthday = document.getElementById('p1-bday').value;
+      p0.gender = readGender('p0-gender');
+      p1.gender = readGender('p1-gender');
+      if (!p0.name || !p1.name) return { ok: false, error: 'Введите оба имени' };
+      if (!p0.gender || !p1.gender) return { ok: false, error: 'Укажите пол для обоих' };
+      updateNodeUkrop(nodeId, ukrop);
+      return { ok: true };
+    }
+
+    const editName = document.getElementById('edit-name');
+    if (editName) {
+      const name = editName.value.trim();
+      const bday = document.getElementById('edit-bday')?.value || '';
+      const gender = readGender('gender');
+      if (!name) return { ok: false, error: 'Введите имя' };
+      if (!gender) return { ok: false, error: 'Укажите пол' };
+      ukrop.type = 'person';
+      ukrop.people = [{ ...(ukrop.people[0] || { id: genPersonId() }), name, gender, birthday: bday }];
+      updateNodeUkrop(nodeId, ukrop);
+      return { ok: true };
+    }
+
+    return { ok: false };
+  }
+
+  function applyPendingEditsFromPanel() {
+    if (!STATE.selectedId || !document.getElementById('edit-apply')) return;
+    const result = applyEditPanel(STATE.selectedId);
+    if (result.ok) document.getElementById('btn-save')?.classList.add('dirty');
+  }
+
+  function wireEditPanelAutoApply(nodeId) {
+    const panel = document.getElementById('edit-panel');
+    if (!panel) return;
+    panel.querySelectorAll('input[type="date"]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const result = applyEditPanel(nodeId);
+        if (result.ok) document.getElementById('btn-save')?.classList.add('dirty');
+      });
+    });
   }
 
   function serializeGraphML() {
@@ -624,6 +784,7 @@
       btn.disabled = true;
       st.textContent = 'Сохранение...';
       try {
+        applyPendingEditsFromPanel();
         stripUkropViewFromDoc();
         await saveGraphML(STATE.code, serializeGraphML());
         STATE.dirty = false;
@@ -768,18 +929,12 @@
         renderEditPanel(id);
       };
       document.getElementById('edit-apply').onclick = () => {
-        p0.name = document.getElementById('p0-name').value.trim();
-        p1.name = document.getElementById('p1-name').value.trim();
-        p0.birthday = document.getElementById('p0-bday').value;
-        p1.birthday = document.getElementById('p1-bday').value;
-        p0.gender = readGender('p0-gender');
-        p1.gender = readGender('p1-gender');
-        if (!p0.name || !p1.name) { alert('Введите оба имени'); return; }
-        if (!p0.gender || !p1.gender) { alert('Укажите пол для обоих'); return; }
-        updateNodeUkrop(id, ukrop);
+        const result = applyEditPanel(id);
+        if (!result.ok) { alert(result.error || 'Не удалось применить'); return; }
         document.getElementById('btn-save').classList.add('dirty');
         renderEditPanel(id);
       };
+      wireEditPanelAutoApply(id);
       return;
     }
 
@@ -812,17 +967,12 @@
       renderEditPanel(id);
     };
     document.getElementById('edit-apply').onclick = () => {
-      const name = document.getElementById('edit-name').value.trim();
-      const bday = document.getElementById('edit-bday').value;
-      const gender = readGender('gender');
-      if (!name) { alert('Введите имя'); return; }
-      if (!gender) { alert('Укажите пол'); return; }
-      ukrop.type = 'person';
-      ukrop.people = [{ id: p.id, name, gender, birthday: bday }];
-      updateNodeUkrop(id, ukrop);
+      const result = applyEditPanel(id);
+      if (!result.ok) { alert(result.error || 'Не удалось применить'); return; }
       document.getElementById('btn-save').classList.add('dirty');
       renderEditPanel(id);
     };
+    wireEditPanelAutoApply(id);
   }
 
   function renderBirthdays() {
