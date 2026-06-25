@@ -711,11 +711,11 @@
       .btn-primary:hover { background: #4aa86b; }
       .btn-secondary { background: #2a3848; color: #cde; }
       .err { color: #ff7b7b; font-size: 0.85rem; margin-top: 0.5rem; }
-      .main-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); height: 100%; height: 100dvh; width: 100%; min-height: 0; overflow: hidden; }
+      .main-layout { flex: 1; display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: 100%; height: 100dvh; width: 100%; min-height: 0; overflow: hidden; }
       .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #1a222d; border-bottom: 1px solid #2a3848; flex-wrap: wrap; min-width: 0; }
       .topbar h1 { font-size: 1.2rem; color: #6bcf8e; flex: 1; min-width: 0; }
-      #cy { grid-column: 1; grid-row: 2; background: #121820; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; position: relative; }
-      .sidebar { grid-column: 2; grid-row: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+      #cy { background: #121820; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; position: relative; }
+      .sidebar { grid-column: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
       .scroll-subtle {
         scrollbar-width: thin;
         scrollbar-color: #3d4f63 transparent;
@@ -729,29 +729,96 @@
       @media (max-width: 800px) {
         .main-layout {
           grid-template-columns: 1fr;
-          grid-template-rows: auto minmax(0, 46vh) minmax(0, 1fr);
+          grid-template-rows: auto minmax(0, 1fr);
+        }
+        .main-row {
+          grid-template-columns: 1fr;
+          position: relative;
         }
         .topbar { padding: 8px 12px; gap: 8px; }
         .topbar h1 { font-size: 0.95rem; }
         .topbar .btn { padding: 0.55rem 0.85rem; font-size: 0.82rem; }
         .status { font-size: 0.72rem; max-width: 100%; }
         .sidebar {
-          grid-column: 1;
-          grid-row: 2;
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          z-index: 20;
+          grid-column: unset;
+          grid-row: unset;
+          height: 50vh;
+          min-height: 56px;
+          max-height: 85vh;
           border-left: none;
           border-bottom: 1px solid #2a3848;
-          max-height: none;
-          height: 100%;
+          border-radius: 0 0 14px 14px;
+          box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
+          padding: 0;
+          gap: 0;
+          overflow: hidden;
+        }
+        .sidebar[data-sheet="collapsed"] .sheet-body {
+          opacity: 0;
+          visibility: hidden;
+          pointer-events: none;
+        }
+        .sheet-body {
+          flex: 1;
+          min-height: 0;
           overflow-y: auto;
           overflow-x: hidden;
-          padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+          padding: 10px 10px 6px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
         }
-        #cy { grid-column: 1; grid-row: 3; min-height: 0; }
+        .sheet-handle {
+          flex-shrink: 0;
+          touch-action: none;
+          user-select: none;
+          padding: 8px 12px 10px;
+          padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+          background: #1a222d;
+          border-top: 1px solid #2a3848;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 5px;
+          cursor: grab;
+        }
+        .sheet-handle:active { cursor: grabbing; }
+        .sheet-handle-bar {
+          width: 40px;
+          height: 4px;
+          background: #4d6078;
+          border-radius: 3px;
+        }
+        .sheet-handle-hint {
+          font-size: 0.72rem;
+          color: #7a8a9c;
+          text-align: center;
+          line-height: 1.3;
+        }
         #edit-panel { flex: 0 0 auto; }
         .panel-bdays { flex: 0 0 auto; min-height: 0; }
         #bday-list { flex: none; max-height: none; overflow: visible; padding-right: 0; margin-right: 0; }
         .edit-form input { font-size: 16px; }
+        .sheet-handle { display: flex; }
       }
+      .main-row {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        min-height: 0;
+        min-width: 0;
+      }
+      .workspace { min-height: 0; min-width: 0; position: relative; }
+      #cy { grid-column: unset; grid-row: unset; }
+      .sidebar { grid-column: 2; grid-row: unset; }
+      .sheet-body { display: contents; }
+      .sheet-handle { display: none; }
       .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; min-width: 0; }
       #edit-panel { flex: 0 0 auto; overflow: visible; }
       .panel-bdays { flex: 1 1 0; min-height: 72px; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 4px; }
@@ -831,6 +898,107 @@
     }
   }
 
+  function initMobileSheet() {
+    const sheet = document.getElementById('mobile-sheet');
+    const handle = document.getElementById('sheet-handle');
+    const hint = document.getElementById('sheet-hint');
+    if (!sheet || !handle) return;
+
+    const SHEET_KEY = 'ukrop_sheet_h';
+    const COLLAPSED = 56;
+
+    function isMobile() {
+      return window.matchMedia('(max-width: 800px)').matches;
+    }
+
+    function halfH() { return window.innerHeight * 0.5; }
+    function maxH() { return window.innerHeight * 0.85; }
+
+    function sheetState(h) {
+      if (h <= COLLAPSED + 10) return 'collapsed';
+      if (h >= halfH() - 24) return 'half';
+      return 'peek';
+    }
+
+    function applyHeight(h, animate) {
+      if (!isMobile()) {
+        sheet.style.height = '';
+        sheet.style.transition = '';
+        delete sheet.dataset.sheet;
+        return;
+      }
+      const clamped = Math.min(maxH(), Math.max(COLLAPSED, h));
+      sheet.style.transition = animate ? 'height 0.22s ease-out' : 'none';
+      sheet.style.height = `${Math.round(clamped)}px`;
+      sheet.dataset.sheet = sheetState(clamped);
+      if (hint) {
+        hint.textContent = sheet.dataset.sheet === 'collapsed'
+          ? 'Потяните вверх — открыть настройки'
+          : 'Потяните вниз — больше дерева';
+      }
+      sessionStorage.setItem(SHEET_KEY, String(Math.round(clamped)));
+      scheduleCyResize();
+    }
+
+    let dragging = false;
+    let moved = false;
+    let startY = 0;
+    let startH = 0;
+
+    function onStart(clientY) {
+      if (!isMobile()) return;
+      dragging = true;
+      moved = false;
+      startY = clientY;
+      startH = sheet.getBoundingClientRect().height;
+      sheet.style.transition = 'none';
+    }
+
+    function onMove(clientY) {
+      if (!dragging || !isMobile()) return;
+      const dy = clientY - startY;
+      if (Math.abs(dy) > 4) moved = true;
+      const next = Math.min(maxH(), Math.max(COLLAPSED, startH - dy));
+      sheet.style.height = `${next}px`;
+      sheet.dataset.sheet = sheetState(next);
+    }
+
+    function onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      if (!isMobile()) return;
+      const h = sheet.getBoundingClientRect().height;
+      const snapCollapsed = COLLAPSED + (halfH() - COLLAPSED) * 0.28;
+      const snapHalf = halfH();
+      let snap;
+      if (h < snapCollapsed) snap = COLLAPSED;
+      else if (h < snapHalf + (maxH() - snapHalf) * 0.35) snap = snapHalf;
+      else snap = maxH();
+      applyHeight(snap, true);
+    }
+
+    const saved = Number(sessionStorage.getItem(SHEET_KEY));
+    applyHeight(saved > COLLAPSED ? saved : halfH(), false);
+
+    handle.addEventListener('touchstart', e => onStart(e.touches[0].clientY), { passive: true });
+    handle.addEventListener('touchmove', e => {
+      onMove(e.touches[0].clientY);
+      if (dragging) e.preventDefault();
+    }, { passive: false });
+    handle.addEventListener('touchend', onEnd);
+    handle.addEventListener('mousedown', e => { onStart(e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => { if (dragging) onMove(e.clientY); });
+    window.addEventListener('mouseup', onEnd);
+    handle.addEventListener('click', () => {
+      if (!isMobile() || moved) return;
+      applyHeight(sheet.dataset.sheet === 'collapsed' ? halfH() : COLLAPSED, true);
+    });
+    window.addEventListener('resize', () => {
+      if (!isMobile()) applyHeight(0, false);
+      else applyHeight(sheet.getBoundingClientRect().height, false);
+    });
+  }
+
   function renderMain() {
     document.getElementById('app').innerHTML = `
       <div class="main-layout">
@@ -839,15 +1007,25 @@
           <span class="status" id="save-status"></span>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
-        <div id="cy"></div>
-        <div class="sidebar scroll-subtle">
-          <div class="panel" id="edit-panel">
-            <h3>Человек</h3>
-            <p class="hint">Кликните на узел в дереве</p>
+        <div class="main-row">
+          <div class="workspace">
+            <div id="cy"></div>
           </div>
-          <div class="panel panel-bdays">
-            <h3>🎂 Дни рождения</h3>
-            <div id="bday-list" class="scroll-subtle"></div>
+          <div class="sidebar scroll-subtle mobile-sheet" id="mobile-sheet">
+            <div class="sheet-body scroll-subtle">
+              <div class="panel" id="edit-panel">
+                <h3>Человек</h3>
+                <p class="hint">Кликните на узел в дереве</p>
+              </div>
+              <div class="panel panel-bdays">
+                <h3>🎂 Дни рождения</h3>
+                <div id="bday-list" class="scroll-subtle"></div>
+              </div>
+            </div>
+            <div class="sheet-handle" id="sheet-handle">
+              <span class="sheet-handle-bar"></span>
+              <span class="sheet-handle-hint" id="sheet-hint">Потяните вниз — больше дерева</span>
+            </div>
           </div>
         </div>
       </div>`;
@@ -859,7 +1037,10 @@
     };
 
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => renderGraph());
+      requestAnimationFrame(() => {
+        renderGraph();
+        initMobileSheet();
+      });
     });
     renderBirthdays();
     renderEditPanel(null);
@@ -938,6 +1119,18 @@
     });
   }
 
+  function expandMobileSheet() {
+    const sheet = document.getElementById('mobile-sheet');
+    if (!sheet || !window.matchMedia('(max-width: 800px)').matches) return;
+    const h = Math.round(window.innerHeight * 0.5);
+    sheet.style.transition = 'height 0.22s ease-out';
+    sheet.style.height = `${h}px`;
+    sheet.dataset.sheet = 'half';
+    const hint = document.getElementById('sheet-hint');
+    if (hint) hint.textContent = 'Потяните вниз — больше дерева';
+    scheduleCyResize();
+  }
+
   function scheduleCyResize() {
     if (!STATE.cy) return;
     requestAnimationFrame(() => {
@@ -955,6 +1148,7 @@
       return;
     }
     panel.style.display = 'block';
+    expandMobileSheet();
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
     const ukrop = JSON.parse(JSON.stringify(node.ukrop));
