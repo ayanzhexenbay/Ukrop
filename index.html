@@ -156,8 +156,18 @@
   }
 
   function ukropNodeSublabel(ukrop) {
-    const parts = (ukrop.people || []).filter(p => p.birthday).map(p => formatBday(p.birthday));
-    return parts.length ? '\n🎂 ' + parts.join(' · ') : '';
+    if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
+      const h = ukrop.people.find(p => p.role === 'husband') || ukrop.people[0];
+      const w = ukrop.people.find(p => p.role === 'wife') || ukrop.people[1];
+      const dh = h.birthday ? formatBday(h.birthday) : '';
+      const dw = w.birthday ? formatBday(w.birthday) : '';
+      if (dh && dw) return `\n[${dh} - ${dw}]`;
+      if (dh) return `\n[${dh}]`;
+      if (dw) return `\n[${dw}]`;
+      return '';
+    }
+    const bday = ukrop.people[0]?.birthday;
+    return bday ? `\n[${formatBday(bday)}]` : '';
   }
 
   function writeUkropToNode(nodeEl, ukrop, keyMap) {
