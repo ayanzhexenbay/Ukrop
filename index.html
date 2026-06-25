@@ -711,13 +711,47 @@
       .btn-primary:hover { background: #4aa86b; }
       .btn-secondary { background: #2a3848; color: #cde; }
       .err { color: #ff7b7b; font-size: 0.85rem; margin-top: 0.5rem; }
-      .main-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); height: 100%; width: 100%; min-height: 0; overflow: hidden; }
-      @media (max-width: 800px) { .main-layout { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); } .sidebar { max-height: 40vh; } }
+      .main-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); height: 100%; height: 100dvh; width: 100%; min-height: 0; overflow: hidden; }
       .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #1a222d; border-bottom: 1px solid #2a3848; flex-wrap: wrap; min-width: 0; }
       .topbar h1 { font-size: 1.2rem; color: #6bcf8e; flex: 1; min-width: 0; }
       #cy { grid-column: 1; grid-row: 2; background: #121820; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; position: relative; }
       .sidebar { grid-column: 2; grid-row: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
-      @media (max-width: 800px) { #cy { grid-column: 1; grid-row: 3; } .sidebar { grid-column: 1; grid-row: 2; border-left: none; border-bottom: 1px solid #2a3848; } }
+      .scroll-subtle {
+        scrollbar-width: thin;
+        scrollbar-color: #3d4f63 transparent;
+        -webkit-overflow-scrolling: touch;
+      }
+      .scroll-subtle::-webkit-scrollbar { width: 4px; }
+      .scroll-subtle::-webkit-scrollbar-track { background: transparent; }
+      .scroll-subtle::-webkit-scrollbar-thumb { background: #3d4f63; border-radius: 4px; }
+      .scroll-subtle::-webkit-scrollbar-thumb:hover { background: #526580; }
+      .scroll-subtle::-webkit-scrollbar-button { display: none; height: 0; }
+      @media (max-width: 800px) {
+        .main-layout {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(0, 46vh) minmax(0, 1fr);
+        }
+        .topbar { padding: 8px 12px; gap: 8px; }
+        .topbar h1 { font-size: 0.95rem; }
+        .topbar .btn { padding: 0.55rem 0.85rem; font-size: 0.82rem; }
+        .status { font-size: 0.72rem; max-width: 100%; }
+        .sidebar {
+          grid-column: 1;
+          grid-row: 2;
+          border-left: none;
+          border-bottom: 1px solid #2a3848;
+          max-height: none;
+          height: 100%;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+        }
+        #cy { grid-column: 1; grid-row: 3; min-height: 0; }
+        #edit-panel { flex: 0 0 auto; }
+        .panel-bdays { flex: 0 0 auto; min-height: 0; }
+        #bday-list { flex: none; max-height: none; overflow: visible; padding-right: 0; margin-right: 0; }
+        .edit-form input { font-size: 16px; }
+      }
       .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; min-width: 0; }
       #edit-panel { flex: 0 0 auto; overflow: visible; }
       .panel-bdays { flex: 1 1 0; min-height: 72px; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 4px; }
@@ -725,14 +759,8 @@
       #bday-list {
         flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
         padding-right: 6px; margin-right: -6px;
-        scrollbar-gutter: stable; scrollbar-width: thin;
-        scrollbar-color: #3d4f63 transparent;
+        scrollbar-gutter: stable;
       }
-      #bday-list::-webkit-scrollbar { width: 5px; }
-      #bday-list::-webkit-scrollbar-track { background: transparent; }
-      #bday-list::-webkit-scrollbar-thumb { background: #3d4f63; border-radius: 4px; }
-      #bday-list::-webkit-scrollbar-thumb:hover { background: #526580; }
-      #bday-list::-webkit-scrollbar-button { display: none; height: 0; }
       .panel h3 { font-size: 0.9rem; color: #8ab4cc; margin-bottom: 8px; }
       .bday-item { padding: 6px 0; border-bottom: 1px solid #222a35; font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
       .bday-item.soon { color: #ffd966; }
@@ -812,14 +840,14 @@
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
         <div id="cy"></div>
-        <div class="sidebar">
+        <div class="sidebar scroll-subtle">
           <div class="panel" id="edit-panel">
             <h3>Человек</h3>
             <p class="hint">Кликните на узел в дереве</p>
           </div>
           <div class="panel panel-bdays">
             <h3>🎂 Дни рождения</h3>
-            <div id="bday-list"></div>
+            <div id="bday-list" class="scroll-subtle"></div>
           </div>
         </div>
       </div>`;
