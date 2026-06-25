@@ -8,7 +8,6 @@
   <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
   <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
   <script src="https://unpkg.com/cytoscape-node-html-label@1.2.2/dist/cytoscape-node-html-label.js"></script>
-  <script src="layout-original.js?v=3"></script>
   <script src="config.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -38,11 +37,6 @@
     dirty: false,
     cy: null,
     selectedId: null,
-    view: null,
-    nodePositions: null,
-    viewTimer: null,
-    skipViewRestore: false,
-    layoutFromFallback: false,
   };
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
@@ -107,251 +101,21 @@
     try { return JSON.parse(text); } catch { return {}; }
   }
 
-  function readGraphMeta(doc, keyMap) {
-    const graph = doc.querySelector('graph');
-    if (!graph) return {};
-    const kid = findUserTagsKeyId(keyMap);
-    const dataEl = graph.querySelector(':scope > data[key="' + kid + '"]');
-    return readJsonFromDataEl(dataEl);
-  }
-
-  function writeGraphView(doc, keyMap, view) {
-    const graph = doc.querySelector('graph');
+  function stripUkropViewFromDoc() {
+    const graph = STATE.xmlDoc?.querySelector('graph');
     if (!graph) return;
-    const kid = findUserTagsKeyId(keyMap);
-    let dataEl = graph.querySelector(':scope > data[key="' + kid + '"]');
-    if (!dataEl) {
-      dataEl = doc.createElement('data');
-      dataEl.setAttribute('key', kid);
-      graph.insertBefore(dataEl, graph.firstChild);
-    }
+    const kid = findUserTagsKeyId(STATE.keyMap);
+    const dataEl = graph.querySelector(':scope > data[key="' + kid + '"]');
+    if (!dataEl) return;
     const wrapper = readJsonFromDataEl(dataEl);
-    if (view) wrapper.ukropView = view;
-    else delete wrapper.ukropView;
+    if (!wrapper.ukropView) return;
+    delete wrapper.ukropView;
     let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
     if (!jsonEl) {
-      jsonEl = doc.createElement('y:Json');
+      jsonEl = STATE.xmlDoc.createElement('y:Json');
       dataEl.appendChild(jsonEl);
     }
     jsonEl.textContent = JSON.stringify(wrapper);
-  }
-
-  function capturePanZoom() {
-    if (!STATE.cy) return;
-    STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
-  }
-
-  function captureGraphView() {
-    capturePanZoom();
-    const pos = {};
-    STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    if (areYEdPositionsValid(pos, STATE.nodes.length) && !isGridLikeLayout(pos, STATE.nodes.length)) {
-      STATE.nodePositions = pos;
-    }
-  }
-
-  function findGeometryKeyId(keyMap) {
-    return Object.entries(keyMap).find(([, v]) =>
-      v.forType === 'node' && v.name === 'NodeGeometry'
-    )?.[0] || 'd5';
-  }
-
-  function parseNodeGeometry(nodeEl, geometryKeyId) {
-    const readRect = dataEl => {
-      const all = dataEl.getElementsByTagName('*');
-      for (let i = 0; i < all.length; i++) {
-        const el = all[i];
-        if (el.localName !== 'RectD') continue;
-        const x = parseFloat(el.getAttribute('X'));
-        const y = parseFloat(el.getAttribute('Y'));
-        const w = parseFloat(el.getAttribute('Width')) || 100;
-        const h = parseFloat(el.getAttribute('Height')) || 30;
-        if (!Number.isNaN(x) && !Number.isNaN(y)) return { x: x + w / 2, y: y + h / 2, w, h };
-      }
-      return null;
-    };
-    for (let i = 0; i < nodeEl.children.length; i++) {
-      const child = nodeEl.children[i];
-      if (child.localName !== 'data') continue;
-      if (geometryKeyId && child.getAttribute('key') !== geometryKeyId) continue;
-      const pos = readRect(child);
-      if (pos) return pos;
-    }
-    for (let i = 0; i < nodeEl.children.length; i++) {
-      const child = nodeEl.children[i];
-      if (child.localName !== 'data') continue;
-      const pos = readRect(child);
-      if (pos) return pos;
-    }
-    return null;
-  }
-
-  function collectYEdPositions(nodes) {
-    const pos = {};
-    for (const n of nodes) {
-      if (n.yEdPos) pos[n.id] = n.yEdPos;
-    }
-    return pos;
-  }
-
-  function areYEdPositionsValid(positions, nodeCount) {
-    if (!positions || nodeCount < 1) return false;
-    const keys = Object.keys(positions);
-    if (keys.length < Math.ceil(nodeCount * 0.95)) return false;
-    const xs = [];
-    const ys = [];
-    for (const id of keys) {
-      const p = positions[id];
-      if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return false;
-      xs.push(p.x);
-      ys.push(p.y);
-    }
-    const spreadX = Math.max(...xs) - Math.min(...xs);
-    const spreadY = Math.max(...ys) - Math.min(...ys);
-    return spreadX > 50 || spreadY > 50;
-  }
-
-  function isGridLikeLayout(positions, nodeCount) {
-    if (!positions || nodeCount < 20) return false;
-    const ys = [];
-    const xs = [];
-    for (const id of Object.keys(positions)) {
-      ys.push(Math.round(positions[id].y / 12) * 12);
-      xs.push(Math.round(positions[id].x / 50) * 50);
-    }
-    const uniqueY = new Set(ys).size;
-    const uniqueX = new Set(xs).size;
-    if (uniqueY > 14 || uniqueX < Math.sqrt(nodeCount)) return false;
-    const rowCounts = {};
-    ys.forEach(y => { rowCounts[y] = (rowCounts[y] || 0) + 1; });
-    const filledRows = Object.values(rowCounts).filter(c => c >= 3).length;
-    return filledRows >= 4 && uniqueY <= 12;
-  }
-
-  let layoutFallbackCache = null;
-  async function loadLayoutFallback() {
-    if (layoutFallbackCache) return layoutFallbackCache;
-    try {
-      const res = await fetch('layout-original.json?v=2');
-      if (!res.ok) return null;
-      const text = (await res.text()).replace(/^\uFEFF/, '').trim();
-      layoutFallbackCache = JSON.parse(text);
-    } catch { /* offline */ }
-    return layoutFallbackCache;
-  }
-
-  function applyPositionsFromMap(posMap) {
-    const geomKey = findGeometryKeyId(STATE.keyMap);
-    for (const n of STATE.nodes) {
-      const p = posMap[n.id];
-      if (!p || !n.el) continue;
-      const w = p.w || 100;
-      const h = p.h || 30;
-      n.yEdPos = { x: p.x, y: p.y, w, h };
-      let dataEl = n.el.querySelector(':scope > data[key="' + geomKey + '"]');
-      if (!dataEl) {
-        dataEl = STATE.xmlDoc.createElement('data');
-        dataEl.setAttribute('key', geomKey);
-        n.el.appendChild(dataEl);
-      }
-      let rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
-      if (!rect) {
-        rect = STATE.xmlDoc.createElement('y:RectD');
-        dataEl.appendChild(rect);
-      }
-      rect.setAttribute('X', String(p.x - w / 2));
-      rect.setAttribute('Y', String(p.y - h / 2));
-      rect.setAttribute('Width', String(w));
-      rect.setAttribute('Height', String(h));
-    }
-  }
-
-  function syncYEdPositionsFromXml() {
-    const geomKey = findGeometryKeyId(STATE.keyMap);
-    for (const n of STATE.nodes) {
-      if (n.el) n.yEdPos = parseNodeGeometry(n.el, geomKey);
-    }
-  }
-
-  function writeYEdPositionsToXml(positions) {
-    const geomKey = findGeometryKeyId(STATE.keyMap);
-    for (const n of STATE.nodes) {
-      const p = positions[n.id];
-      if (!p || !n.el) continue;
-      const w = n.yEdPos?.w || 100;
-      const h = n.yEdPos?.h || 30;
-      const left = p.x - w / 2;
-      const top = p.y - h / 2;
-      let dataEl = n.el.querySelector(':scope > data[key="' + geomKey + '"]');
-      if (!dataEl) {
-        dataEl = STATE.xmlDoc.createElement('data');
-        dataEl.setAttribute('key', geomKey);
-        n.el.appendChild(dataEl);
-      }
-      let rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
-      if (!rect) {
-        rect = STATE.xmlDoc.createElement('y:RectD');
-        dataEl.appendChild(rect);
-      }
-      rect.setAttribute('X', String(left));
-      rect.setAttribute('Y', String(top));
-      rect.setAttribute('Width', String(w));
-      rect.setAttribute('Height', String(h));
-      n.yEdPos = { x: p.x, y: p.y, w, h };
-    }
-  }
-
-  function applyFileLayout() {
-    syncYEdPositionsFromXml();
-    let yEd = collectYEdPositions(STATE.nodes);
-    STATE.layoutFromFallback = false;
-
-    if (!areYEdPositionsValid(yEd, STATE.nodes.length) || isGridLikeLayout(yEd, STATE.nodes.length)) {
-      const fb = window.UKROP_ORIGINAL_LAYOUT;
-      if (fb) {
-        applyPositionsFromMap(fb);
-        yEd = collectYEdPositions(STATE.nodes);
-        STATE.layoutFromFallback = true;
-      }
-    }
-
-    const ok = areYEdPositionsValid(yEd, STATE.nodes.length) && !isGridLikeLayout(yEd, STATE.nodes.length);
-    STATE.nodePositions = ok ? yEd : null;
-    STATE.view = null;
-    STATE.skipViewRestore = true;
-    return ok;
-  }
-
-  function resolveInitialLayout(nodes, ukropView, code) {
-    try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
-  }
-
-  function resetGraphLayout() {
-    applyFileLayout();
-    try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
-    writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
-    if (STATE.layoutFromFallback) STATE.dirty = true;
-    renderGraph({ fit: true, ignoreCapture: true });
-  }
-
-  function restoreGraphView(cy) {
-    if (!STATE.view) return;
-    if (typeof STATE.view.zoom === 'number') cy.zoom(STATE.view.zoom);
-    if (STATE.view.pan) cy.pan(STATE.view.pan);
-  }
-
-  function persistViewToGraph() {
-    if (!STATE.cy) return;
-    STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
-    const pos = {};
-    STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    if (!areYEdPositionsValid(pos, STATE.nodes.length) || isGridLikeLayout(pos, STATE.nodes.length)) return;
-    STATE.nodePositions = pos;
-    writeYEdPositionsToXml(pos);
-    writeGraphView(STATE.xmlDoc, STATE.keyMap, {
-      zoom: STATE.view.zoom,
-      pan: STATE.view.pan,
-    });
   }
 
   function splitCoupleName(label) {
@@ -517,10 +281,6 @@
       v.forType === 'node' && LABEL_KEYS.some(l => l.toLowerCase() === v.name.toLowerCase())
     )?.[0];
 
-    let geometryKeyId = Object.entries(keyMap).find(([, v]) =>
-      v.forType === 'node' && v.name === 'NodeGeometry'
-    )?.[0];
-
     const graph = doc.getElementsByTagName('graph')[0];
     if (!graph) throw new Error('В GraphML нет элемента graph');
 
@@ -576,7 +336,7 @@
 
       nodes.push({
         id, label: ukropDisplayLabel(ukrop), birthday, el: nodeEl, attrs, ukrop,
-        kind: nodeKind(ukrop), yEdPos: parseNodeGeometry(nodeEl, geometryKeyId),
+        kind: nodeKind(ukrop),
       });
     }
 
@@ -597,9 +357,7 @@
       });
     }
 
-    const graphMeta = readGraphMeta(doc, keyMap);
-
-    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId, userTagsKeyId, ukropView: graphMeta.ukropView };
+    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId, userTagsKeyId };
   }
 
   function findKeyByName(keyMap, name) {
@@ -825,8 +583,7 @@
       STATE.birthdayKeyId = parsed.birthdayKeyId;
       STATE.labelKeyId = parsed.labelKeyId;
       STATE.userTagsKeyId = parsed.userTagsKeyId;
-      resolveInitialLayout(parsed.nodes, parsed.ukropView, STATE.code);
-      applyFileLayout();
+      stripUkropViewFromDoc();
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -840,7 +597,6 @@
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
-          <button class="btn btn-secondary" id="btn-reset-layout">Как в файле</button>
           <button class="btn btn-save" id="btn-save">Сохранить на Drive</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
@@ -863,19 +619,13 @@
       renderLogin();
     };
 
-    document.getElementById('btn-reset-layout').onclick = () => {
-      if (confirm('Вернуть расположение из GraphML (yEd) и сбросить масштаб?')) {
-        resetGraphLayout();
-      }
-    };
-
     document.getElementById('btn-save').onclick = async () => {
       const btn = document.getElementById('btn-save');
       const st = document.getElementById('save-status');
       btn.disabled = true;
       st.textContent = 'Сохранение...';
       try {
-        persistViewToGraph();
+        stripUkropViewFromDoc();
         await saveGraphML(STATE.code, serializeGraphML());
         STATE.dirty = false;
         btn.classList.remove('dirty');
@@ -889,52 +639,22 @@
     };
 
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        renderGraph({ fit: true });
-        if (STATE.layoutFromFallback) {
-          const st = document.getElementById('save-status');
-          if (st) {
-            st.textContent = 'Восстановлен оригинальный вид — сохраните на Drive';
-            document.getElementById('btn-save')?.classList.add('dirty');
-            STATE.dirty = true;
-          }
-        }
-      });
+      requestAnimationFrame(() => renderGraph());
     });
     renderBirthdays();
     renderEditPanel(null);
   }
 
-  function applyPositionsOnCy(cy) {
-    if (!STATE.nodePositions) return false;
-    let applied = 0;
-    for (const n of STATE.nodes) {
-      const p = STATE.nodePositions[n.id];
-      if (!p || typeof p.x !== 'number') continue;
-      const el = cy.getElementById(n.id);
-      if (el.nonempty()) {
-        el.position({ x: p.x, y: p.y });
-        applied++;
-      }
-    }
-    return applied >= Math.ceil(STATE.nodes.length * 0.95);
-  }
-
-  function renderGraph(opts = {}) {
+  function renderGraph() {
     const container = document.getElementById('cy');
     if (!container) return;
 
     const selectedId = STATE.selectedId;
-    const shouldFit = opts.fit === true || STATE.skipViewRestore;
 
     if (STATE.cy) {
-      if (!opts.ignoreCapture) capturePanZoom();
       STATE.cy.destroy();
       STATE.cy = null;
     }
-
-    const hasPositions = areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length)
-      && !isGridLikeLayout(STATE.nodePositions, STATE.nodes.length);
 
     const elements = [
       ...STATE.nodes.map(n => ({ data: nodeCyData(n) })),
@@ -966,54 +686,21 @@
       ],
     });
 
-    const positioned = hasPositions && applyPositionsOnCy(STATE.cy);
-
-    const finishLayout = () => {
-      STATE.cy.resize();
-      if (positioned) {
-        if (STATE.view && !shouldFit) restoreGraphView(STATE.cy);
-        else STATE.cy.fit(null, 60);
-        STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
-        STATE.skipViewRestore = false;
-        if (selectedId) {
-          const sel = STATE.cy.getElementById(selectedId);
-          if (sel.nonempty()) sel.select();
-        }
-        setupHtmlLabels(STATE.cy);
-        return;
-      }
-      const layout = STATE.cy.layout({
-        name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
-        nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
-      });
-      layout.one('layoutstop', () => {
-        STATE.cy.resize();
-        STATE.cy.fit(null, 60);
-        STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
-        STATE.skipViewRestore = false;
-        if (selectedId) {
-          const sel = STATE.cy.getElementById(selectedId);
-          if (sel.nonempty()) sel.select();
-        }
-        setupHtmlLabels(STATE.cy);
-      });
-      layout.run();
-    };
-
-    if (positioned) {
-      requestAnimationFrame(() => requestAnimationFrame(finishLayout));
-    } else {
-      finishLayout();
-    }
-
-    STATE.cy.on('pan zoom', () => {
-      clearTimeout(STATE.viewTimer);
-      STATE.viewTimer = setTimeout(() => {
-        if (STATE.cy) {
-          STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
-        }
-      }, 300);
+    const layout = STATE.cy.layout({
+      name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
+      nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
     });
+
+    layout.one('layoutstop', () => {
+      STATE.cy.resize();
+      STATE.cy.fit(null, 60);
+      if (selectedId) {
+        const sel = STATE.cy.getElementById(selectedId);
+        if (sel.nonempty()) sel.select();
+      }
+      setupHtmlLabels(STATE.cy);
+    });
+    layout.run();
 
     STATE.cy.on('tap', evt => {
       if (evt.target === STATE.cy) {
