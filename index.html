@@ -123,7 +123,8 @@
       graph.insertBefore(dataEl, graph.firstChild);
     }
     const wrapper = readJsonFromDataEl(dataEl);
-    wrapper.ukropView = view;
+    if (view) wrapper.ukropView = view;
+    else delete wrapper.ukropView;
     let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
     if (!jsonEl) {
       jsonEl = doc.createElement('y:Json');
@@ -137,14 +138,89 @@
     STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
     const pos = {};
     STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    STATE.nodePositions = pos;
+    if (arePositionsValid(pos, STATE.nodes.length)) {
+      STATE.nodePositions = pos;
+    }
     try {
       if (STATE.code) {
         sessionStorage.setItem('ukrop_view_' + STATE.code, JSON.stringify({
-          view: STATE.view, positions: pos,
+          view: STATE.view, positions: STATE.nodePositions,
         }));
       }
     } catch { /* quota */ }
+  }
+
+  function parseNodeGeometry(nodeEl) {
+    const all = nodeEl.getElementsByTagName('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (el.localName === 'RectD') {
+        const x = parseFloat(el.getAttribute('X'));
+        const y = parseFloat(el.getAttribute('Y'));
+        const w = parseFloat(el.getAttribute('Width')) || 0;
+        const h = parseFloat(el.getAttribute('Height')) || 0;
+        if (!Number.isNaN(x) && !Number.isNaN(y)) return { x: x + w / 2, y: y + h / 2 };
+      }
+    }
+    return null;
+  }
+
+  function collectYEdPositions(nodes) {
+    const pos = {};
+    for (const n of nodes) {
+      if (n.yEdPos) pos[n.id] = n.yEdPos;
+    }
+    return pos;
+  }
+
+  function arePositionsValid(positions, nodeCount) {
+    if (!positions || nodeCount < 1) return false;
+    const entries = Object.values(positions);
+    if (entries.length < nodeCount * 0.65) return false;
+    const xs = [];
+    const ys = [];
+    for (const p of entries) {
+      if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return false;
+      xs.push(p.x);
+      ys.push(p.y);
+    }
+    const spreadX = Math.max(...xs) - Math.min(...xs);
+    const spreadY = Math.max(...ys) - Math.min(...ys);
+    if (nodeCount > 6 && spreadX < 100 && spreadY < 100) return false;
+    const bucket = v => Math.round(v / 20);
+    const xB = new Map();
+    const yB = new Map();
+    xs.forEach(x => xB.set(bucket(x), (xB.get(bucket(x)) || 0) + 1));
+    ys.forEach(y => yB.set(bucket(y), (yB.get(bucket(y)) || 0) + 1));
+    const maxCol = Math.max(...xB.values());
+    const maxRow = Math.max(...yB.values());
+    if (nodeCount > 25 && maxCol > nodeCount * 0.25 && maxRow > nodeCount * 0.2) return false;
+    return true;
+  }
+
+  function resolveInitialLayout(nodes, ukropView, code) {
+    STATE.nodePositions = null;
+    STATE.view = null;
+    loadViewState(ukropView, code);
+    if (arePositionsValid(STATE.nodePositions, nodes.length)) return;
+    const yEd = collectYEdPositions(nodes);
+    if (arePositionsValid(yEd, nodes.length)) {
+      STATE.nodePositions = yEd;
+      STATE.view = null;
+    } else {
+      STATE.nodePositions = null;
+      STATE.view = null;
+    }
+    try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
+  }
+
+  function resetGraphLayout() {
+    const yEd = collectYEdPositions(STATE.nodes);
+    STATE.nodePositions = arePositionsValid(yEd, STATE.nodes.length) ? yEd : null;
+    STATE.view = null;
+    try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
+    writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
+    renderGraph();
   }
 
   function restoreGraphView(cy) {
@@ -155,10 +231,11 @@
 
   function persistViewToGraph() {
     captureGraphView();
+    if (!arePositionsValid(STATE.nodePositions, STATE.nodes.length)) return;
     writeGraphView(STATE.xmlDoc, STATE.keyMap, {
       zoom: STATE.view?.zoom,
       pan: STATE.view?.pan,
-      positions: STATE.nodePositions || {},
+      positions: STATE.nodePositions,
     });
   }
 
@@ -392,7 +469,7 @@
 
       nodes.push({
         id, label: ukropDisplayLabel(ukrop), birthday, el: nodeEl, attrs, ukrop,
-        kind: nodeKind(ukrop),
+        kind: nodeKind(ukrop), yEdPos: parseNodeGeometry(nodeEl),
       });
     });
 
@@ -638,7 +715,7 @@
       STATE.birthdayKeyId = parsed.birthdayKeyId;
       STATE.labelKeyId = parsed.labelKeyId;
       STATE.userTagsKeyId = parsed.userTagsKeyId;
-      loadViewState(parsed.ukropView, STATE.code);
+      resolveInitialLayout(parsed.nodes, parsed.ukropView, STATE.code);
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -652,6 +729,7 @@
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
+          <button class="btn btn-secondary" id="btn-reset-layout">Сбросить вид</button>
           <button class="btn btn-save" id="btn-save">Сохранить на Drive</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
@@ -672,6 +750,10 @@
       sessionStorage.removeItem('ukrop_code');
       STATE.code = '';
       renderLogin();
+    };
+
+    document.getElementById('btn-reset-layout').onclick = () => {
+      if (confirm('Вернуть расположение из yEd и сбросить масштаб?')) resetGraphLayout();
     };
 
     document.getElementById('btn-save').onclick = async () => {
@@ -710,7 +792,7 @@
       STATE.cy = null;
     }
 
-    const hasPositions = STATE.nodePositions && Object.keys(STATE.nodePositions).length > 0;
+    const hasPositions = arePositionsValid(STATE.nodePositions, STATE.nodes.length);
 
     const elements = [
       ...STATE.nodes.map(n => {
@@ -759,8 +841,8 @@
         restoreGraphView(STATE.cy);
       } else {
         STATE.cy.fit(null, 50);
-        captureGraphView();
       }
+      captureGraphView();
       if (selectedId) {
         const sel = STATE.cy.getElementById(selectedId);
         if (sel.nonempty()) sel.select();
