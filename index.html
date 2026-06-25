@@ -1134,7 +1134,9 @@
   function expandMobileSheet() {
     const sheet = document.getElementById('mobile-sheet');
     if (!sheet || !window.matchMedia('(max-width: 800px)').matches) return;
-    const h = Math.round(window.innerHeight * 0.5);
+    const node = STATE.selectedId && STATE.nodes.find(n => n.id === STATE.selectedId);
+    const isCouple = node?.ukrop?.type === 'couple';
+    const h = Math.round(window.innerHeight * (isCouple ? 0.72 : 0.5));
     sheet.style.transition = 'height 0.22s ease-out';
     sheet.style.height = `${h}px`;
     sheet.dataset.sheet = 'half';
