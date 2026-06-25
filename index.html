@@ -720,15 +720,25 @@
       @media (max-width: 800px) { #cy { grid-column: 1; grid-row: 3; } .sidebar { grid-column: 1; grid-row: 2; border-left: none; border-bottom: 1px solid #2a3848; } }
       .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; min-width: 0; }
       #edit-panel { flex: 0 0 auto; overflow: visible; }
-      .panel-bdays { flex: 1 1 0; min-height: 72px; display: flex; flex-direction: column; overflow: hidden; }
+      .panel-bdays { flex: 1 1 0; min-height: 72px; display: flex; flex-direction: column; overflow: hidden; padding-bottom: 4px; }
       .panel-bdays h3 { flex-shrink: 0; }
-      #bday-list { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+      #bday-list {
+        flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
+        padding-right: 6px; margin-right: -6px;
+        scrollbar-gutter: stable; scrollbar-width: thin;
+        scrollbar-color: #3d4f63 transparent;
+      }
+      #bday-list::-webkit-scrollbar { width: 5px; }
+      #bday-list::-webkit-scrollbar-track { background: transparent; }
+      #bday-list::-webkit-scrollbar-thumb { background: #3d4f63; border-radius: 4px; }
+      #bday-list::-webkit-scrollbar-thumb:hover { background: #526580; }
+      #bday-list::-webkit-scrollbar-button { display: none; height: 0; }
       .panel h3 { font-size: 0.9rem; color: #8ab4cc; margin-bottom: 8px; }
       .bday-item { padding: 6px 0; border-bottom: 1px solid #222a35; font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
       .bday-item.soon { color: #ffd966; }
       .bday-item.today { color: #6bcf8e; font-weight: 700; }
       .bday-item span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .bday-item span:last-child { flex-shrink: 0; }
+      .bday-item span:last-child { flex-shrink: 0; padding-right: 2px; color: #9aabb8; font-size: 0.82rem; }
       .edit-form { min-width: 0; overflow: hidden; }
       .edit-form input { margin-bottom: 8px; max-width: 100%; }
       .edit-section { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #2a3848; }
