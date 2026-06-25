@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
   <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
   <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <script src="https://unpkg.com/cytoscape-node-html-label@1.2.2/dist/cytoscape-node-html-label.js"></script>
   <script src="config.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -478,8 +479,45 @@
     node.kind = nodeKind(ukrop);
     node.birthday = ukrop.people[0]?.birthday || '';
     STATE.dirty = true;
-    renderGraph();
+    if (STATE.cy) {
+      refreshNodeOnGraph(id);
+    } else {
+      renderGraph();
+    }
     renderBirthdays();
+  }
+
+  function nodeCyData(n) {
+    return {
+      id: n.id,
+      nameLine: n.label,
+      bdayLine: ukropNodeSublabel(n.ukrop).trim(),
+      kind: n.kind,
+    };
+  }
+
+  function setupHtmlLabels(cy) {
+    if (!cy.nodeHtmlLabel) return;
+    cy.nodeHtmlLabel([{
+      query: 'node',
+      halign: 'center',
+      valign: 'center',
+      halignBox: 'center',
+      valignBox: 'center',
+      tpl(data) {
+        const bday = data.bdayLine
+          ? `<div class="cy-bday">${escHtml(data.bdayLine)}</div>` : '';
+        return `<div class="cy-node-text"><div class="cy-name">${escHtml(data.nameLine)}</div>${bday}</div>`;
+      },
+    }]);
+  }
+
+  function refreshNodeOnGraph(id) {
+    if (!STATE.cy) return;
+    const node = STATE.nodes.find(n => n.id === id);
+    if (!node) return;
+    const ele = STATE.cy.getElementById(id);
+    if (ele.nonempty()) ele.data(nodeCyData(node));
   }
 
   function serializeGraphML() {
@@ -491,6 +529,10 @@
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
+  }
+
+  function escHtml(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function formatBday(b) {
@@ -553,6 +595,9 @@
       .status { font-size: 0.8rem; color: #6bcf8e; }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
+      .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; }
+      .cy-name { font-size: 12px; font-weight: 600; color: #eef2f8; }
+      .cy-bday { font-size: 9px; color: #7a8899; margin-top: 4px; font-weight: 400; }
     `;
     document.head.appendChild(s);
   }
@@ -670,11 +715,7 @@
     const elements = [
       ...STATE.nodes.map(n => {
         const item = {
-          data: {
-            id: n.id,
-            label: n.label + ukropNodeSublabel(n.ukrop),
-            kind: n.kind,
-          },
+          data: nodeCyData(n),
         };
         const p = STATE.nodePositions?.[n.id];
         if (p) item.position = { x: p.x, y: p.y };
@@ -691,9 +732,8 @@
       wheelSensitivity: 0.28,
       style: [
         { selector: 'node', style: {
-          'background-color': '#3d8f5a', 'label': 'data(label)', 'color': '#e8edf5',
-          'text-valign': 'center', 'text-halign': 'center', 'font-size': '9px',
-          'width': 95, 'height': 95, 'text-wrap': 'wrap', 'text-max-width': 88,
+          'background-color': '#3d8f5a', 'label': '', 'color': '#e8edf5',
+          'width': 95, 'height': 95,
           'border-width': 2, 'border-color': '#6bcf8e',
         }},
         { selector: 'node[kind = "couple"]', style: {
@@ -725,12 +765,22 @@
         const sel = STATE.cy.getElementById(selectedId);
         if (sel.nonempty()) sel.select();
       }
+      setupHtmlLabels(STATE.cy);
     });
     layout.run();
 
     STATE.cy.on('pan zoom', () => {
       clearTimeout(STATE.viewTimer);
       STATE.viewTimer = setTimeout(captureGraphView, 300);
+    });
+
+    STATE.cy.on('tap', evt => {
+      if (evt.target === STATE.cy) {
+        STATE.selectedId = null;
+        STATE.cy.elements().unselect();
+        renderEditPanel(null);
+        return;
+      }
     });
 
     STATE.cy.on('tap', 'node', evt => {
@@ -744,9 +794,11 @@
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
     if (!id) {
-      panel.innerHTML = '<h3>Человек</h3><p class="hint">Кликните на узел в дереве</p>';
+      panel.style.display = 'none';
+      panel.innerHTML = '';
       return;
     }
+    panel.style.display = 'block';
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
     const ukrop = JSON.parse(JSON.stringify(node.ukrop));
@@ -874,6 +926,9 @@
   // ─── Init ───
   injectStyles();
   cytoscape.use(cytoscapeDagre);
+  if (typeof cytoscapeNodeHtmlLabel !== 'undefined') {
+    cytoscape.use(cytoscapeNodeHtmlLabel);
+  }
 
   if (STATE.code && window.UKROP_CONFIG && window.UKROP_CONFIG.APPS_SCRIPT_URL) {
     tryLogin(STATE.code);
