@@ -37,8 +37,33 @@
     selectedId: null,
   };
 
-  const LABEL_KEYS = ['NodeLabel', 'label', 'name', 'Имя', 'ФИО'];
+  const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
   const BDAY_KEYS = ['birthday', 'Birthday', 'birthdate', 'День рождения', 'dob'];
+  const SKIP_LABEL_KEYS = ['zOrder', 'Expanded', 'url', 'description', 'UserTags'];
+
+  function extractYEdLabel(nodeEl) {
+    const all = nodeEl.getElementsByTagName('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (el.localName === 'Label') {
+        const text = el.getAttribute('Text') || el.getAttribute('text');
+        if (text && text.trim()) return text.trim();
+      }
+    }
+    return '';
+  }
+
+  function setYEdLabel(nodeEl, label) {
+    const all = nodeEl.getElementsByTagName('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (el.localName === 'Label') {
+        el.setAttribute('Text', label);
+        return true;
+      }
+    }
+    return false;
+  }
 
   // ─── API (Google Apps Script + Drive) ───
   function apiUrl(params) {
@@ -108,17 +133,33 @@
         attrs['_' + kid] = d.textContent;
       });
 
-      let label = '';
-      for (const k of LABEL_KEYS) {
-        if (attrs[k]) { label = attrs[k]; labelKeyId = labelKeyId || findKeyByName(keyMap, k); break; }
-      }
+      let label = extractYEdLabel(nodeEl);
+
       if (!label) {
-        const first = nodeEl.querySelector('data');
-        if (first) {
-          label = first.textContent;
-          if (!labelKeyId) labelKeyId = first.getAttribute('key');
+        for (const k of LABEL_KEYS) {
+          if (attrs[k]) { label = attrs[k]; labelKeyId = labelKeyId || findKeyByName(keyMap, k); break; }
         }
       }
+
+      if (!label) {
+        const desc = attrs.description || attrs['description'];
+        if (desc && desc.trim()) label = desc.trim();
+      }
+
+      if (!label) {
+        for (const d of nodeEl.querySelectorAll(':scope > data')) {
+          const kid = d.getAttribute('key');
+          const kname = keyMap[kid]?.name || '';
+          if (SKIP_LABEL_KEYS.includes(kname) || kname.includes('Geometry') || kname.includes('Style')) continue;
+          const val = (d.textContent || '').trim();
+          if (val && val.length < 80 && !val.startsWith('<') && !val.startsWith('{')) {
+            label = val;
+            if (!labelKeyId) labelKeyId = kid;
+            break;
+          }
+        }
+      }
+
       if (!label) label = id;
 
       let birthday = '';
@@ -202,10 +243,16 @@
   function updateNode(id, label, birthday) {
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
-    const bKey = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
-    const lKey = ensureLabelKey(STATE.xmlDoc, STATE.keyMap, node.el);
-    setNodeData(node.el, lKey, label);
-    setNodeData(node.el, bKey, birthday);
+    if (!setYEdLabel(node.el, label)) {
+      const bKey = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
+      const lKey = ensureLabelKey(STATE.xmlDoc, STATE.keyMap, node.el);
+      setNodeData(node.el, lKey, label);
+      void bKey;
+    }
+    if (birthday) {
+      const bKey = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
+      setNodeData(node.el, bKey, birthday);
+    }
     node.label = label;
     node.birthday = birthday;
     STATE.dirty = true;
