@@ -12,8 +12,9 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      height: 100%; font-family: 'Segoe UI', system-ui, sans-serif;
+      height: 100%; width: 100%; font-family: 'Segoe UI', system-ui, sans-serif;
       background: #0f1419; color: #e8edf5;
+      overflow: hidden;
     }
   </style>
 </head>
@@ -661,8 +662,8 @@
     const s = document.createElement('style');
     s.id = 'ukrop-styles';
     s.textContent = `
-      #app { min-height: 100%; display: flex; flex-direction: column; }
-      .screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
+      #app { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+      .screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
       .logo { font-size: 2.4rem; font-weight: 700; margin-bottom: 0.5rem;
         background: linear-gradient(135deg, #6bcf8e, #4a9eff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
       .sub { color: #8899aa; margin-bottom: 1.5rem; text-align: center; }
@@ -676,29 +677,32 @@
       .btn-save { background: #c9a227; color: #111; }
       .btn-save.dirty { box-shadow: 0 0 12px rgba(201,162,39,0.5); }
       .err { color: #ff7b7b; font-size: 0.85rem; margin-top: 0.5rem; }
-      .main-layout { flex: 1; display: grid; grid-template-columns: 1fr 300px; grid-template-rows: auto 1fr; height: 100vh; width: 100%; }
-      @media (max-width: 800px) { .main-layout { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; } .sidebar { max-height: 40vh; } }
-      .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #1a222d; border-bottom: 1px solid #2a3848; flex-wrap: wrap; }
-      .topbar h1 { font-size: 1.2rem; color: #6bcf8e; flex: 1; }
-      #cy { grid-column: 1; background: #121820; min-height: 300px; }
-      .sidebar { grid-column: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+      .main-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); height: 100%; width: 100%; min-height: 0; overflow: hidden; }
+      @media (max-width: 800px) { .main-layout { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); } .sidebar { max-height: 40vh; } }
+      .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #1a222d; border-bottom: 1px solid #2a3848; flex-wrap: wrap; min-width: 0; }
+      .topbar h1 { font-size: 1.2rem; color: #6bcf8e; flex: 1; min-width: 0; }
+      #cy { grid-column: 1; grid-row: 2; background: #121820; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; position: relative; }
+      .sidebar { grid-column: 2; grid-row: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow-x: hidden; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
       @media (max-width: 800px) { #cy { grid-column: 1; grid-row: 3; } .sidebar { grid-column: 1; grid-row: 2; border-left: none; border-bottom: 1px solid #2a3848; } }
-      .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; }
+      .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; min-width: 0; overflow: hidden; }
       .panel h3 { font-size: 0.9rem; color: #8ab4cc; margin-bottom: 8px; }
-      .bday-item { padding: 6px 0; border-bottom: 1px solid #222a35; font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; }
+      .bday-item { padding: 6px 0; border-bottom: 1px solid #222a35; font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
       .bday-item.soon { color: #ffd966; }
       .bday-item.today { color: #6bcf8e; font-weight: 700; }
-      .edit-form input { margin-bottom: 8px; }
+      .bday-item span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bday-item span:last-child { flex-shrink: 0; }
+      .edit-form { min-width: 0; overflow: hidden; }
+      .edit-form input { margin-bottom: 8px; max-width: 100%; }
       .edit-section { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #2a3848; }
       .edit-section h4 { font-size: 0.82rem; color: #6bcf8e; margin-bottom: 6px; }
-      .gender-row { display: flex; gap: 12px; margin-bottom: 8px; font-size: 0.85rem; }
+      .gender-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.85rem; }
       .gender-row label { display: flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
       .btn-ghost-sm { background: transparent; border: 1px solid #445; color: #9ab; padding: 0.4rem 0.7rem; font-size: 0.78rem; margin-top: 4px; width: 100%; }
       .hint { font-size: 0.78rem; color: #667; line-height: 1.4; }
       .status { font-size: 0.8rem; color: #6bcf8e; }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
-      .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); }
+      .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; }
       .cy-node-text.has-bday { transform: translateY(8px); }
       .cy-name { font-size: 12px; font-weight: 600; color: #eef2f8; }
       .cy-bday { font-size: 9px; color: #7a8899; margin-top: 4px; font-weight: 400; }
@@ -878,12 +882,20 @@
     });
   }
 
+  function scheduleCyResize() {
+    if (!STATE.cy) return;
+    requestAnimationFrame(() => {
+      STATE.cy.resize();
+    });
+  }
+
   function renderEditPanel(id) {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
     if (!id) {
       panel.style.display = 'none';
       panel.innerHTML = '';
+      scheduleCyResize();
       return;
     }
     panel.style.display = 'block';
@@ -935,6 +947,7 @@
         renderEditPanel(id);
       };
       wireEditPanelAutoApply(id);
+      scheduleCyResize();
       return;
     }
 
@@ -973,6 +986,7 @@
       renderEditPanel(id);
     };
     wireEditPanelAutoApply(id);
+    scheduleCyResize();
   }
 
   function renderBirthdays() {
