@@ -608,19 +608,12 @@
     return { ok: false };
   }
 
-  function applyPendingEditsFromPanel() {
-    if (!STATE.selectedId || !document.getElementById('edit-apply')) return;
-    const result = applyEditPanel(STATE.selectedId);
-    if (result.ok) document.getElementById('btn-save')?.classList.add('dirty');
-  }
-
   function wireEditPanelAutoApply(nodeId) {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
     panel.querySelectorAll('input[type="date"]').forEach(inp => {
       inp.addEventListener('change', () => {
-        const result = applyEditPanel(nodeId);
-        if (result.ok) document.getElementById('btn-save')?.classList.add('dirty');
+        applyEditPanel(nodeId);
       });
     });
   }
@@ -633,7 +626,6 @@
     stripUkropViewFromDoc();
     await saveGraphML(STATE.code, serializeGraphML());
     STATE.dirty = false;
-    document.getElementById('btn-save')?.classList.remove('dirty');
   }
 
   function setSaveStatus(message, clearMs = 0) {
@@ -645,34 +637,31 @@
     }
   }
 
+  async function saveNodeChangesToDrive(nodeId, statusMessage) {
+    const btnApply = document.getElementById('edit-apply');
+    if (btnApply) btnApply.disabled = true;
+    setSaveStatus('Сохранение...');
+    try {
+      await persistToDrive();
+      if (nodeId) renderEditPanel(nodeId);
+      setSaveStatus(statusMessage || '✓ Применено и сохранено на Drive', 4000);
+    } catch (e) {
+      setSaveStatus('');
+      STATE.dirty = true;
+      alert(e.message);
+    } finally {
+      const applyBtn = document.getElementById('edit-apply');
+      if (applyBtn) applyBtn.disabled = false;
+    }
+  }
+
   async function applyAndSaveToDrive(nodeId) {
     const result = applyEditPanel(nodeId);
     if (!result.ok) {
       alert(result.error || 'Не удалось применить');
       return;
     }
-
-    const btnSave = document.getElementById('btn-save');
-    const btnApply = document.getElementById('edit-apply');
-    if (btnSave) btnSave.disabled = true;
-    if (btnApply) btnApply.disabled = true;
-    setSaveStatus('Сохранение...');
-
-    try {
-      await persistToDrive();
-      renderEditPanel(nodeId);
-      setSaveStatus('✓ Применено и сохранено на Drive', 4000);
-    } catch (e) {
-      setSaveStatus('');
-      btnSave?.classList.add('dirty');
-      renderEditPanel(nodeId);
-      alert(e.message);
-    } finally {
-      const saveBtn = document.getElementById('btn-save');
-      const applyBtn = document.getElementById('edit-apply');
-      if (saveBtn) saveBtn.disabled = false;
-      if (applyBtn) applyBtn.disabled = false;
-    }
+    await saveNodeChangesToDrive(nodeId, '✓ Применено и сохранено на Drive');
   }
 
   // ─── UI helpers ───
@@ -721,8 +710,6 @@
       .btn-primary { background: #3d8f5a; color: #fff; width: 100%; }
       .btn-primary:hover { background: #4aa86b; }
       .btn-secondary { background: #2a3848; color: #cde; }
-      .btn-save { background: #c9a227; color: #111; }
-      .btn-save.dirty { box-shadow: 0 0 12px rgba(201,162,39,0.5); }
       .err { color: #ff7b7b; font-size: 0.85rem; margin-top: 0.5rem; }
       .main-layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr); height: 100%; width: 100%; min-height: 0; overflow: hidden; }
       @media (max-width: 800px) { .main-layout { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); } .sidebar { max-height: 40vh; } }
@@ -808,7 +795,6 @@
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
-          <button class="btn btn-save" id="btn-save">Сохранить на Drive</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
         <div id="cy"></div>
@@ -828,21 +814,6 @@
       sessionStorage.removeItem('ukrop_code');
       STATE.code = '';
       renderLogin();
-    };
-
-    document.getElementById('btn-save').onclick = async () => {
-      const btn = document.getElementById('btn-save');
-      btn.disabled = true;
-      setSaveStatus('Сохранение...');
-      try {
-        applyPendingEditsFromPanel();
-        await persistToDrive();
-        setSaveStatus('✓ Сохранено на Google Drive', 3000);
-      } catch (e) {
-        setSaveStatus('');
-        alert(e.message);
-      }
-      btn.disabled = false;
     };
 
     requestAnimationFrame(() => {
@@ -980,8 +951,8 @@
         ukrop.type = 'person';
         ukrop.people = [{ id: p0.id, name, gender, birthday: document.getElementById('p0-bday').value }];
         updateNodeUkrop(id, ukrop);
-        document.getElementById('btn-save').classList.add('dirty');
         renderEditPanel(id);
+        saveNodeChangesToDrive(id, '✓ Применено и сохранено на Drive');
       };
       document.getElementById('edit-apply').onclick = () => {
         applyAndSaveToDrive(id);
@@ -1016,8 +987,8 @@
         { id: genPersonId(), name: 'Имя', gender: '', birthday: '' },
       ];
       updateNodeUkrop(id, ukrop);
-      document.getElementById('btn-save').classList.add('dirty');
       renderEditPanel(id);
+      saveNodeChangesToDrive(id, '✓ Применено и сохранено на Drive');
     };
     document.getElementById('edit-apply').onclick = () => {
       applyAndSaveToDrive(id);
