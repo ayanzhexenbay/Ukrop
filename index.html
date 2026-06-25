@@ -138,28 +138,42 @@
     STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
     const pos = {};
     STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    if (arePositionsValid(pos, STATE.nodes.length)) {
+    if (areYEdPositionsValid(pos, STATE.nodes.length)) {
       STATE.nodePositions = pos;
     }
-    try {
-      if (STATE.code) {
-        sessionStorage.setItem('ukrop_view_' + STATE.code, JSON.stringify({
-          view: STATE.view, positions: STATE.nodePositions,
-        }));
-      }
-    } catch { /* quota */ }
   }
 
-  function parseNodeGeometry(nodeEl) {
+  function findGeometryKeyId(keyMap) {
+    return Object.entries(keyMap).find(([, v]) =>
+      v.forType === 'node' && v.name === 'NodeGeometry'
+    )?.[0] || 'd5';
+  }
+
+  function parseNodeGeometry(nodeEl, geometryKeyId) {
+    if (geometryKeyId) {
+      const dataEl = nodeEl.querySelector(':scope > data[key="' + geometryKeyId + '"]');
+      if (dataEl) {
+        const rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
+        if (rect) {
+          const x = parseFloat(rect.getAttribute('X'));
+          const y = parseFloat(rect.getAttribute('Y'));
+          const w = parseFloat(rect.getAttribute('Width')) || 100;
+          const h = parseFloat(rect.getAttribute('Height')) || 30;
+          if (!Number.isNaN(x) && !Number.isNaN(y)) {
+            return { x: x + w / 2, y: y + h / 2, w, h };
+          }
+        }
+      }
+    }
     const all = nodeEl.getElementsByTagName('*');
     for (let i = 0; i < all.length; i++) {
       const el = all[i];
       if (el.localName === 'RectD') {
         const x = parseFloat(el.getAttribute('X'));
         const y = parseFloat(el.getAttribute('Y'));
-        const w = parseFloat(el.getAttribute('Width')) || 0;
-        const h = parseFloat(el.getAttribute('Height')) || 0;
-        if (!Number.isNaN(x) && !Number.isNaN(y)) return { x: x + w / 2, y: y + h / 2 };
+        const w = parseFloat(el.getAttribute('Width')) || 100;
+        const h = parseFloat(el.getAttribute('Height')) || 30;
+        if (!Number.isNaN(x) && !Number.isNaN(y)) return { x: x + w / 2, y: y + h / 2, w, h };
       }
     }
     return null;
@@ -173,54 +187,81 @@
     return pos;
   }
 
-  function arePositionsValid(positions, nodeCount) {
+  function areYEdPositionsValid(positions, nodeCount) {
     if (!positions || nodeCount < 1) return false;
-    const entries = Object.values(positions);
-    if (entries.length < nodeCount * 0.65) return false;
+    const keys = Object.keys(positions);
+    if (keys.length < nodeCount) return false;
     const xs = [];
     const ys = [];
-    for (const p of entries) {
+    for (const id of keys) {
+      const p = positions[id];
       if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return false;
       xs.push(p.x);
       ys.push(p.y);
     }
     const spreadX = Math.max(...xs) - Math.min(...xs);
     const spreadY = Math.max(...ys) - Math.min(...ys);
-    if (nodeCount > 6 && spreadX < 100 && spreadY < 100) return false;
-    const bucket = v => Math.round(v / 20);
-    const xB = new Map();
-    const yB = new Map();
-    xs.forEach(x => xB.set(bucket(x), (xB.get(bucket(x)) || 0) + 1));
-    ys.forEach(y => yB.set(bucket(y), (yB.get(bucket(y)) || 0) + 1));
-    const maxCol = Math.max(...xB.values());
-    const maxRow = Math.max(...yB.values());
-    if (nodeCount > 25 && maxCol > nodeCount * 0.25 && maxRow > nodeCount * 0.2) return false;
-    return true;
+    return spreadX > 50 || spreadY > 50;
+  }
+
+  function syncYEdPositionsFromXml() {
+    const geomKey = findGeometryKeyId(STATE.keyMap);
+    for (const n of STATE.nodes) {
+      if (n.el) n.yEdPos = parseNodeGeometry(n.el, geomKey);
+    }
+  }
+
+  function writeYEdPositionsToXml(positions) {
+    const geomKey = findGeometryKeyId(STATE.keyMap);
+    for (const n of STATE.nodes) {
+      const p = positions[n.id];
+      if (!p || !n.el) continue;
+      const w = n.yEdPos?.w || 100;
+      const h = n.yEdPos?.h || 30;
+      const left = p.x - w / 2;
+      const top = p.y - h / 2;
+      let dataEl = n.el.querySelector(':scope > data[key="' + geomKey + '"]');
+      if (!dataEl) {
+        dataEl = STATE.xmlDoc.createElement('data');
+        dataEl.setAttribute('key', geomKey);
+        n.el.appendChild(dataEl);
+      }
+      let rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
+      if (!rect) {
+        rect = STATE.xmlDoc.createElement('y:RectD');
+        dataEl.appendChild(rect);
+      }
+      rect.setAttribute('X', String(left));
+      rect.setAttribute('Y', String(top));
+      rect.setAttribute('Width', String(w));
+      rect.setAttribute('Height', String(h));
+      n.yEdPos = { x: p.x, y: p.y, w, h };
+    }
   }
 
   function resolveInitialLayout(nodes, ukropView, code) {
     STATE.nodePositions = null;
     STATE.view = null;
-    loadViewState(ukropView, code);
-    if (arePositionsValid(STATE.nodePositions, nodes.length)) return;
-    const yEd = collectYEdPositions(nodes);
-    if (arePositionsValid(yEd, nodes.length)) {
-      STATE.nodePositions = yEd;
-      STATE.view = null;
-    } else {
-      STATE.nodePositions = null;
-      STATE.view = null;
-    }
     try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
+
+    const yEd = collectYEdPositions(nodes);
+    if (areYEdPositionsValid(yEd, nodes.length)) {
+      STATE.nodePositions = yEd;
+    }
+
+    if (ukropView && typeof ukropView.zoom === 'number' && ukropView.pan) {
+      STATE.view = { zoom: ukropView.zoom, pan: ukropView.pan };
+    }
   }
 
   function resetGraphLayout() {
+    syncYEdPositionsFromXml();
     const yEd = collectYEdPositions(STATE.nodes);
-    STATE.nodePositions = arePositionsValid(yEd, STATE.nodes.length) ? yEd : null;
+    STATE.nodePositions = areYEdPositionsValid(yEd, STATE.nodes.length) ? yEd : null;
     STATE.view = null;
     try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
     writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
-    renderGraph();
+    renderGraph({ fit: true });
   }
 
   function restoreGraphView(cy) {
@@ -230,30 +271,17 @@
   }
 
   function persistViewToGraph() {
-    captureGraphView();
-    if (!arePositionsValid(STATE.nodePositions, STATE.nodes.length)) return;
+    if (!STATE.cy) return;
+    STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+    const pos = {};
+    STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
+    if (!areYEdPositionsValid(pos, STATE.nodes.length)) return;
+    STATE.nodePositions = pos;
+    writeYEdPositionsToXml(pos);
     writeGraphView(STATE.xmlDoc, STATE.keyMap, {
-      zoom: STATE.view?.zoom,
-      pan: STATE.view?.pan,
-      positions: STATE.nodePositions,
+      zoom: STATE.view.zoom,
+      pan: STATE.view.pan,
     });
-  }
-
-  function loadViewState(ukropView, code) {
-    if (ukropView && ukropView.positions && Object.keys(ukropView.positions).length) {
-      STATE.view = { zoom: ukropView.zoom, pan: ukropView.pan };
-      STATE.nodePositions = ukropView.positions;
-      return;
-    }
-    try {
-      const raw = sessionStorage.getItem('ukrop_view_' + code);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (saved.positions && Object.keys(saved.positions).length) {
-        STATE.view = saved.view;
-        STATE.nodePositions = saved.positions;
-      }
-    } catch { /* ignore */ }
   }
 
   function splitCoupleName(label) {
@@ -419,6 +447,10 @@
       v.forType === 'node' && LABEL_KEYS.some(l => l.toLowerCase() === v.name.toLowerCase())
     )?.[0];
 
+    let geometryKeyId = Object.entries(keyMap).find(([, v]) =>
+      v.forType === 'node' && v.name === 'NodeGeometry'
+    )?.[0];
+
     const nodes = [];
     doc.querySelectorAll('graph > node, node').forEach(nodeEl => {
       if (nodeEl.parentElement && nodeEl.parentElement.tagName === 'node') return;
@@ -469,7 +501,7 @@
 
       nodes.push({
         id, label: ukropDisplayLabel(ukrop), birthday, el: nodeEl, attrs, ukrop,
-        kind: nodeKind(ukrop), yEdPos: parseNodeGeometry(nodeEl),
+        kind: nodeKind(ukrop), yEdPos: parseNodeGeometry(nodeEl, geometryKeyId),
       });
     });
 
@@ -729,7 +761,7 @@
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
-          <button class="btn btn-secondary" id="btn-reset-layout">Сбросить вид</button>
+          <button class="btn btn-secondary" id="btn-reset-layout">Как в файле</button>
           <button class="btn btn-save" id="btn-save">Сохранить на Drive</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
@@ -753,7 +785,7 @@
     };
 
     document.getElementById('btn-reset-layout').onclick = () => {
-      if (confirm('Вернуть расположение из yEd и сбросить масштаб?')) resetGraphLayout();
+      if (confirm('Вернуть расположение из GraphML (yEd) и сбросить масштаб?')) resetGraphLayout();
     };
 
     document.getElementById('btn-save').onclick = async () => {
@@ -780,11 +812,12 @@
     renderEditPanel(null);
   }
 
-  function renderGraph() {
+  function renderGraph(opts = {}) {
     const container = document.getElementById('cy');
     if (!container) return;
 
     const selectedId = STATE.selectedId;
+    const forceFit = opts.fit === true;
 
     if (STATE.cy) {
       captureGraphView();
@@ -792,15 +825,13 @@
       STATE.cy = null;
     }
 
-    const hasPositions = arePositionsValid(STATE.nodePositions, STATE.nodes.length);
+    const hasPositions = !forceFit && areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length);
 
     const elements = [
       ...STATE.nodes.map(n => {
-        const item = {
-          data: nodeCyData(n),
-        };
+        const item = { data: nodeCyData(n) };
         const p = STATE.nodePositions?.[n.id];
-        if (p) item.position = { x: p.x, y: p.y };
+        if (hasPositions && p) item.position = { x: p.x, y: p.y };
         return item;
       }),
       ...STATE.edges.map(e => ({ data: { id: e.id, source: e.source, target: e.target } })),
@@ -809,7 +840,7 @@
     STATE.cy = cytoscape({
       container,
       elements,
-      minZoom: 0.12,
+      minZoom: 0.08,
       maxZoom: 4,
       wheelSensitivity: 0.28,
       style: [
@@ -832,17 +863,28 @@
     });
 
     const layout = STATE.cy.layout(hasPositions
-      ? { name: 'preset' }
-      : { name: 'dagre', rankDir: 'TB', nodeSep: 40, rankSep: 60, animate: false }
+      ? { name: 'preset', fit: false }
+      : {
+          name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
+          nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
+        }
     );
 
     layout.one('layoutstop', () => {
-      if (hasPositions && STATE.view) {
+      if (hasPositions && STATE.view && !forceFit) {
         restoreGraphView(STATE.cy);
       } else {
-        STATE.cy.fit(null, 50);
+        STATE.cy.fit(null, 60);
+        STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
       }
-      captureGraphView();
+      if (hasPositions && !forceFit) {
+        captureGraphView();
+      } else {
+        const pos = {};
+        STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
+        STATE.nodePositions = pos;
+        captureGraphView();
+      }
       if (selectedId) {
         const sel = STATE.cy.getElementById(selectedId);
         if (sel.nonempty()) sel.select();
@@ -853,7 +895,11 @@
 
     STATE.cy.on('pan zoom', () => {
       clearTimeout(STATE.viewTimer);
-      STATE.viewTimer = setTimeout(captureGraphView, 300);
+      STATE.viewTimer = setTimeout(() => {
+        if (STATE.cy) {
+          STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+        }
+      }, 300);
     });
 
     STATE.cy.on('tap', evt => {
