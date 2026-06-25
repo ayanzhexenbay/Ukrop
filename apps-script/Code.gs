@@ -11,10 +11,10 @@
  */
 
 // ID файла Укроп.graphml на Google Drive (из URL: drive.google.com/file/d/FILE_ID/...)
-const FILE_ID = 'ВСТАВЬТЕ_ID_ФАЙЛА';
+const FILE_ID = '1kiX68XcMpdnabDZiHBdv0ZwH4GKtwZzQ';
 
-// Код доступа для семьи (придумайте свой)
-const ACCESS_CODE = 'укроп2026';
+// Код доступа для семьи
+const ACCESS_CODE = 'alasha';
 
 function checkCode(code) {
   return code && String(code).trim() === ACCESS_CODE;
