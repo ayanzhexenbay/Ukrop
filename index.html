@@ -30,6 +30,7 @@
     keyMap: {},
     birthdayKeyId: null,
     labelKeyId: null,
+    userTagsKeyId: null,
     nodes: [],
     edges: [],
     dirty: false,
@@ -63,6 +64,130 @@
       }
     }
     return false;
+  }
+
+  function genPersonId() {
+    return 'p' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function genderIcon(g) {
+    return g === 'male' ? '♂' : g === 'female' ? '♀' : '';
+  }
+
+  function findUserTagsKeyId(keyMap) {
+    const entry = Object.entries(keyMap).find(([, v]) =>
+      v.name === 'UserTags' || String(v.name).toLowerCase() === 'usertags'
+    );
+    return entry ? entry[0] : 'd6';
+  }
+
+  function readJsonFromDataEl(dataEl) {
+    if (!dataEl) return {};
+    const jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
+    const text = (jsonEl ? jsonEl.textContent : dataEl.textContent || '').trim();
+    if (!text) return {};
+    try { return JSON.parse(text); } catch { return {}; }
+  }
+
+  function splitCoupleName(label) {
+    const parts = label.split(/\s*[-–—/|]\s*|\s+и\s+/i).map(s => s.trim()).filter(Boolean);
+    return parts.length >= 2 ? parts.slice(0, 2) : null;
+  }
+
+  function migrateLabelToUkrop(label, birthday) {
+    const pair = splitCoupleName(label);
+    if (pair) {
+      return {
+        type: 'couple',
+        people: [
+          { id: genPersonId(), name: pair[0], gender: 'male', role: 'husband', birthday: '' },
+          { id: genPersonId(), name: pair[1], gender: 'female', role: 'wife', birthday: '' },
+        ],
+      };
+    }
+    return {
+      type: 'person',
+      people: [{ id: genPersonId(), name: label, gender: '', role: '', birthday: birthday || '' }],
+    };
+  }
+
+  function parseUkropFromNode(nodeEl, label, birthday, keyMap) {
+    const kid = findUserTagsKeyId(keyMap);
+    const dataEl = nodeEl.querySelector(`data[key="${kid}"]`);
+    const wrapper = readJsonFromDataEl(dataEl);
+    if (wrapper.ukrop && Array.isArray(wrapper.ukrop.people) && wrapper.ukrop.people.length) {
+      const ukrop = wrapper.ukrop;
+      ukrop.people.forEach(p => { if (!p.id) p.id = genPersonId(); });
+      return ukrop;
+    }
+    const ukrop = migrateLabelToUkrop(label, birthday);
+    if (birthday && ukrop.type === 'person' && ukrop.people[0]) {
+      ukrop.people[0].birthday = birthday;
+    }
+    return ukrop;
+  }
+
+  function ukropYEdLabel(ukrop) {
+    if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
+      return ukrop.people.map(p => p.name).join('-');
+    }
+    return ukrop.people[0]?.name || '';
+  }
+
+  function ukropDisplayLabel(ukrop) {
+    const people = ukrop.people || [];
+    if (ukrop.type === 'couple' && people.length >= 2) {
+      const h = people.find(p => p.role === 'husband') || people.find(p => p.gender === 'male') || people[0];
+      const w = people.find(p => p.role === 'wife') || people.find(p => p.gender === 'female') || people[1];
+      return `${h.name} ${genderIcon(h.gender || 'male')} / ${w.name} ${genderIcon(w.gender || 'female')}`;
+    }
+    const p = people[0] || {};
+    return `${p.name || '?'}${genderIcon(p.gender) ? ' ' + genderIcon(p.gender) : ''}`;
+  }
+
+  function ukropNodeSublabel(ukrop) {
+    const parts = (ukrop.people || []).filter(p => p.birthday).map(p => {
+      const g = genderIcon(p.gender);
+      return (g ? g + ' ' : '') + formatBday(p.birthday);
+    });
+    return parts.length ? '\n🎂 ' + parts.join(' · ') : '';
+  }
+
+  function writeUkropToNode(nodeEl, ukrop, keyMap) {
+    const kid = findUserTagsKeyId(keyMap);
+    let dataEl = nodeEl.querySelector(`data[key="${kid}"]`);
+    if (!dataEl) {
+      dataEl = nodeEl.ownerDocument.createElement('data');
+      dataEl.setAttribute('key', kid);
+      nodeEl.appendChild(dataEl);
+    }
+    const wrapper = readJsonFromDataEl(dataEl);
+    wrapper.ukrop = ukrop;
+    let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
+    if (!jsonEl) {
+      jsonEl = nodeEl.ownerDocument.createElement('y:Json');
+      dataEl.appendChild(jsonEl);
+    }
+    jsonEl.textContent = JSON.stringify(wrapper);
+    setYEdLabel(nodeEl, ukropYEdLabel(ukrop));
+  }
+
+  function collectAllPeople() {
+    const result = [];
+    for (const n of STATE.nodes) {
+      for (const p of (n.ukrop?.people || [])) {
+        result.push({ ...p, nodeId: n.id });
+      }
+    }
+    return result;
+  }
+
+  function nodeKind(ukrop) {
+    if (ukrop.type === 'couple') return 'couple';
+    const g = ukrop.people[0]?.gender;
+    if (g === 'male') return 'male';
+    if (g === 'female') return 'female';
+    return 'person';
   }
 
   // ─── API (Google Apps Script + Drive) ───
@@ -167,8 +292,15 @@
         if (attrs[k]) { birthday = attrs[k]; birthdayKeyId = birthdayKeyId || findKeyByName(keyMap, k); break; }
       }
 
-      nodes.push({ id, label, birthday, el: nodeEl, attrs });
+      const ukrop = parseUkropFromNode(nodeEl, label, birthday, keyMap);
+
+      nodes.push({
+        id, label: ukropDisplayLabel(ukrop), birthday, el: nodeEl, attrs, ukrop,
+        kind: nodeKind(ukrop),
+      });
     });
+
+    const userTagsKeyId = findUserTagsKeyId(keyMap);
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const edges = [];
@@ -182,7 +314,7 @@
       });
     });
 
-    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId };
+    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId, userTagsKeyId };
   }
 
   function findKeyByName(keyMap, name) {
@@ -236,28 +368,27 @@
     dataEl.textContent = value;
   }
 
-  function serializeGraphML() {
-    return new XMLSerializer().serializeToString(STATE.xmlDoc);
-  }
-
-  function updateNode(id, label, birthday) {
+  function updateNodeUkrop(id, ukrop) {
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
-    if (!setYEdLabel(node.el, label)) {
-      const bKey = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
-      const lKey = ensureLabelKey(STATE.xmlDoc, STATE.keyMap, node.el);
-      setNodeData(node.el, lKey, label);
-      void bKey;
+    if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
+      ukrop.people[0].role = 'husband';
+      ukrop.people[1].role = 'wife';
+      if (!ukrop.people[0].gender) ukrop.people[0].gender = 'male';
+      if (!ukrop.people[1].gender) ukrop.people[1].gender = 'female';
     }
-    if (birthday) {
-      const bKey = ensureBirthdayKey(STATE.xmlDoc, STATE.keyMap);
-      setNodeData(node.el, bKey, birthday);
-    }
-    node.label = label;
-    node.birthday = birthday;
+    writeUkropToNode(node.el, ukrop, STATE.keyMap);
+    node.ukrop = ukrop;
+    node.label = ukropDisplayLabel(ukrop);
+    node.kind = nodeKind(ukrop);
+    node.birthday = ukrop.people[0]?.birthday || '';
     STATE.dirty = true;
     renderGraph();
     renderBirthdays();
+  }
+
+  function serializeGraphML() {
+    return new XMLSerializer().serializeToString(STATE.xmlDoc);
   }
 
   // ─── UI helpers ───
@@ -318,6 +449,11 @@
       .bday-item.soon { color: #ffd966; }
       .bday-item.today { color: #6bcf8e; font-weight: 700; }
       .edit-form input { margin-bottom: 8px; }
+      .edit-section { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #2a3848; }
+      .edit-section h4 { font-size: 0.82rem; color: #6bcf8e; margin-bottom: 6px; }
+      .gender-row { display: flex; gap: 12px; margin-bottom: 8px; font-size: 0.85rem; }
+      .gender-row label { display: flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+      .btn-ghost-sm { background: transparent; border: 1px solid #445; color: #9ab; padding: 0.4rem 0.7rem; font-size: 0.78rem; margin-top: 4px; width: 100%; }
       .hint { font-size: 0.78rem; color: #667; line-height: 1.4; }
       .status { font-size: 0.8rem; color: #6bcf8e; }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
@@ -361,6 +497,7 @@
       STATE.edges = parsed.edges;
       STATE.birthdayKeyId = parsed.birthdayKeyId;
       STATE.labelKeyId = parsed.labelKeyId;
+      STATE.userTagsKeyId = parsed.userTagsKeyId;
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -429,8 +566,8 @@
       ...STATE.nodes.map(n => ({
         data: {
           id: n.id,
-          label: n.label + (n.birthday ? '\n🎂 ' + formatBday(n.birthday) : ''),
-          birthday: n.birthday,
+          label: n.label + ukropNodeSublabel(n.ukrop),
+          kind: n.kind,
         },
       })),
       ...STATE.edges.map(e => ({ data: { id: e.id, source: e.source, target: e.target } })),
@@ -442,10 +579,15 @@
       style: [
         { selector: 'node', style: {
           'background-color': '#3d8f5a', 'label': 'data(label)', 'color': '#e8edf5',
-          'text-valign': 'center', 'text-halign': 'center', 'font-size': '10px',
-          'width': 80, 'height': 80, 'text-wrap': 'wrap', 'text-max-width': 70,
+          'text-valign': 'center', 'text-halign': 'center', 'font-size': '9px',
+          'width': 95, 'height': 95, 'text-wrap': 'wrap', 'text-max-width': 88,
           'border-width': 2, 'border-color': '#6bcf8e',
         }},
+        { selector: 'node[kind = "couple"]', style: {
+          'background-color': '#2d5a6a', 'border-color': '#5ab4d4', 'width': 110, 'height': 100,
+        }},
+        { selector: 'node[kind = "male"]', style: { 'background-color': '#3d5f8f', 'border-color': '#6a9fd8' }},
+        { selector: 'node[kind = "female"]', style: { 'background-color': '#8f3d6a', 'border-color': '#d86a9f' }},
         { selector: 'node:selected', style: { 'background-color': '#4a9eff', 'border-color': '#7bc8ff' }},
         { selector: 'edge', style: {
           'width': 2, 'line-color': '#445566', 'target-arrow-color': '#445566',
@@ -471,21 +613,93 @@
     }
     const node = STATE.nodes.find(n => n.id === id);
     if (!node) return;
+    const ukrop = JSON.parse(JSON.stringify(node.ukrop));
+
+    if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
+      const h = ukrop.people.find(p => p.role === 'husband') || ukrop.people[0];
+      const w = ukrop.people.find(p => p.role === 'wife') || ukrop.people[1];
+      panel.innerHTML = `
+        <h3>Пара (2 человека)</h3>
+        <div class="edit-form">
+          <div class="edit-section">
+            <h4>♂ Муж</h4>
+            <label>Имя</label>
+            <input type="text" id="h-name" value="${esc(h.name)}">
+            <label>День рождения</label>
+            <input type="date" id="h-bday" value="${h.birthday || ''}">
+          </div>
+          <div class="edit-section">
+            <h4>♀ Жена</h4>
+            <label>Имя</label>
+            <input type="text" id="w-name" value="${esc(w.name)}">
+            <label>День рождения</label>
+            <input type="date" id="w-bday" value="${w.birthday || ''}">
+          </div>
+          <button class="btn btn-ghost-sm" id="btn-to-person">Сделать одним человеком</button>
+          <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
+        </div>`;
+      document.getElementById('btn-to-person').onclick = () => {
+        const name = document.getElementById('h-name').value.trim() || h.name;
+        ukrop.type = 'person';
+        ukrop.people = [{ id: h.id, name, gender: 'male', role: '', birthday: document.getElementById('h-bday').value }];
+        updateNodeUkrop(id, ukrop);
+        document.getElementById('btn-save').classList.add('dirty');
+        renderEditPanel(id);
+      };
+      document.getElementById('edit-apply').onclick = () => {
+        h.name = document.getElementById('h-name').value.trim();
+        w.name = document.getElementById('w-name').value.trim();
+        h.birthday = document.getElementById('h-bday').value;
+        w.birthday = document.getElementById('w-bday').value;
+        h.gender = 'male'; h.role = 'husband';
+        w.gender = 'female'; w.role = 'wife';
+        if (!h.name || !w.name) { alert('Введите оба имени'); return; }
+        updateNodeUkrop(id, ukrop);
+        document.getElementById('btn-save').classList.add('dirty');
+        renderEditPanel(id);
+      };
+      return;
+    }
+
+    const p = ukrop.people[0] || { id: genPersonId(), name: '', gender: '', birthday: '' };
     panel.innerHTML = `
-      <h3>Редактирование</h3>
+      <h3>Человек</h3>
       <div class="edit-form">
         <label>Имя</label>
-        <input type="text" id="edit-name" value="${esc(node.label)}">
+        <input type="text" id="edit-name" value="${esc(p.name)}">
+        <label>Пол</label>
+        <div class="gender-row">
+          <label><input type="radio" name="gender" value="male" ${p.gender === 'male' ? 'checked' : ''}> ♂ Мужчина</label>
+          <label><input type="radio" name="gender" value="female" ${p.gender === 'female' ? 'checked' : ''}> ♀ Женщина</label>
+        </div>
         <label>День рождения</label>
-        <input type="date" id="edit-bday" value="${node.birthday && /^\d{4}-\d{2}-\d{2}$/.test(node.birthday) ? node.birthday : ''}">
-        <p class="hint">Формат даты: ГГГГ-ММ-ДД. Пусто — без даты.</p>
-        <button class="btn btn-primary" id="edit-apply">Применить</button>
+        <input type="date" id="edit-bday" value="${p.birthday || ''}">
+        <button class="btn btn-ghost-sm" id="btn-to-couple">Сделать парой (муж + жена)</button>
+        <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
       </div>`;
+    document.getElementById('btn-to-couple').onclick = () => {
+      const name = document.getElementById('edit-name').value.trim() || p.name;
+      const parts = splitCoupleName(name);
+      ukrop.type = 'couple';
+      ukrop.people = parts ? [
+        { id: genPersonId(), name: parts[0], gender: 'male', role: 'husband', birthday: '' },
+        { id: genPersonId(), name: parts[1], gender: 'female', role: 'wife', birthday: document.getElementById('edit-bday').value },
+      ] : [
+        { id: p.id, name, gender: 'male', role: 'husband', birthday: document.getElementById('edit-bday').value },
+        { id: genPersonId(), name: 'Имя жены', gender: 'female', role: 'wife', birthday: '' },
+      ];
+      updateNodeUkrop(id, ukrop);
+      document.getElementById('btn-save').classList.add('dirty');
+      renderEditPanel(id);
+    };
     document.getElementById('edit-apply').onclick = () => {
       const name = document.getElementById('edit-name').value.trim();
       const bday = document.getElementById('edit-bday').value;
+      const gender = document.querySelector('input[name="gender"]:checked')?.value || '';
       if (!name) { alert('Введите имя'); return; }
-      updateNode(id, name, bday);
+      ukrop.type = 'person';
+      ukrop.people = [{ id: p.id, name, gender, role: '', birthday: bday }];
+      updateNodeUkrop(id, ukrop);
       document.getElementById('btn-save').classList.add('dirty');
       renderEditPanel(id);
     };
@@ -494,25 +708,24 @@
   function renderBirthdays() {
     const list = document.getElementById('bday-list');
     if (!list) return;
-    const withBday = STATE.nodes
-      .filter(n => n.birthday)
-      .map(n => ({ ...n, days: daysUntil(n.birthday) }))
-      .sort((a, b) => {
-        const da = a.birthday.slice(5), db = b.birthday.slice(5);
-        return da.localeCompare(db);
-      });
+    const withBday = collectAllPeople()
+      .filter(p => p.birthday)
+      .map(p => ({ ...p, days: daysUntil(p.birthday) }))
+      .sort((a, b) => a.birthday.slice(5).localeCompare(b.birthday.slice(5)));
 
     if (!withBday.length) {
-      list.innerHTML = '<p class="hint">Добавьте даты рождения, кликнув на человека в дереве</p>';
+      list.innerHTML = '<p class="hint">Добавьте даты рождения в карточке человека</p>';
       return;
     }
 
-    list.innerHTML = withBday.map(n => {
+    list.innerHTML = withBday.map(p => {
       let cls = 'bday-item';
       let suffix = '';
-      if (n.days === 0) { cls += ' today'; suffix = ' — сегодня!'; }
-      else if (n.days !== null && n.days <= 14) { cls += ' soon'; suffix = ` — через ${n.days} дн.`; }
-      return `<div class="${cls}"><span>${esc(n.label)}</span><span>${formatBday(n.birthday)}${suffix}</span></div>`;
+      if (p.days === 0) { cls += ' today'; suffix = ' — сегодня!'; }
+      else if (p.days !== null && p.days <= 14) { cls += ' soon'; suffix = ` — через ${p.days} дн.`; }
+      const g = genderIcon(p.gender);
+      const role = p.role === 'husband' ? ' (муж)' : p.role === 'wife' ? ' (жена)' : '';
+      return `<div class="${cls}"><span>${g ? g + ' ' : ''}${esc(p.name)}${role}</span><span>${formatBday(p.birthday)}${suffix}</span></div>`;
     }).join('');
   }
 
