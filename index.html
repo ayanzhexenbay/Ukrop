@@ -726,38 +726,48 @@
       .scroll-subtle::-webkit-scrollbar-thumb { background: #3d4f63; border-radius: 4px; }
       .scroll-subtle::-webkit-scrollbar-thumb:hover { background: #526580; }
       .scroll-subtle::-webkit-scrollbar-button { display: none; height: 0; }
-      @media (max-width: 800px) {
+      @media (max-width: 900px) {
         .main-layout {
           grid-template-columns: 1fr;
           grid-template-rows: auto minmax(0, 1fr);
         }
         .main-row {
-          grid-template-columns: 1fr;
-          position: relative;
+          display: flex;
+          flex-direction: column;
           height: 100%;
+          min-height: 0;
+          grid-template-columns: unset;
+        }
+        .workspace {
+          flex: 1 1 0;
+          min-height: 38vh;
+          width: 100%;
+          order: 1;
         }
         .topbar { padding: 8px 12px; gap: 8px; }
         .topbar h1 { font-size: 0.95rem; }
         .topbar .btn { padding: 0.55rem 0.85rem; font-size: 0.82rem; }
         .status { font-size: 0.72rem; max-width: 100%; }
         .sidebar {
-          position: absolute;
+          position: relative;
           top: auto;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          z-index: 20;
+          bottom: auto;
+          left: auto;
+          right: auto;
+          z-index: 1;
+          flex: 0 0 auto;
+          order: 2;
           grid-column: unset;
           grid-row: unset;
-          height: 50vh;
-          min-height: 56px;
-          max-height: 85vh;
+          height: 42vh;
+          min-height: 52px;
+          max-height: 58vh;
           width: 100%;
           border-left: none;
           border-top: 1px solid #2a3848;
           border-bottom: none;
           border-radius: 14px 14px 0 0;
-          box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.38);
+          box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.28);
           padding: 0;
           gap: 0;
           overflow: hidden;
@@ -816,7 +826,7 @@
         .edit-form input { font-size: 16px; }
         .sheet-handle { display: flex; }
       }
-      @media (min-width: 801px) {
+      @media (min-width: 901px) {
         .sheet-body { display: contents; }
         .sheet-handle { display: none !important; }
       }
@@ -917,14 +927,20 @@
     if (!sheet || !handle) return;
 
     const SHEET_KEY = 'ukrop_sheet_h';
-    const COLLAPSED = 56;
+    const MOBILE_MQ = '(max-width: 900px)';
+    const COLLAPSED = 52;
 
     function isMobile() {
-      return window.matchMedia('(max-width: 800px)').matches;
+      return window.matchMedia(MOBILE_MQ).matches;
     }
 
-    function halfH() { return window.innerHeight * 0.5; }
-    function maxH() { return window.innerHeight * 0.85; }
+    function rowH() {
+      const row = document.querySelector('.main-row');
+      return row ? row.clientHeight : window.innerHeight;
+    }
+
+    function halfH() { return rowH() * 0.42; }
+    function maxH() { return rowH() * 0.58; }
 
     function sheetState(h) {
       if (h <= COLLAPSED + 10) return 'collapsed';
@@ -1133,10 +1149,11 @@
 
   function expandMobileSheet() {
     const sheet = document.getElementById('mobile-sheet');
-    if (!sheet || !window.matchMedia('(max-width: 800px)').matches) return;
+    if (!sheet || !window.matchMedia('(max-width: 900px)').matches) return;
     const node = STATE.selectedId && STATE.nodes.find(n => n.id === STATE.selectedId);
     const isCouple = node?.ukrop?.type === 'couple';
-    const h = Math.round(window.innerHeight * (isCouple ? 0.72 : 0.5));
+    const row = document.querySelector('.main-row');
+    const h = Math.round((row ? row.clientHeight : window.innerHeight) * (isCouple ? 0.52 : 0.42));
     sheet.style.transition = 'height 0.22s ease-out';
     sheet.style.height = `${h}px`;
     sheet.dataset.sheet = 'half';
