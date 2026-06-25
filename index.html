@@ -719,8 +719,8 @@
       .sidebar { grid-column: 2; grid-row: 2; background: #1a222d; border-left: 1px solid #2a3848; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
       @media (max-width: 800px) { #cy { grid-column: 1; grid-row: 3; } .sidebar { grid-column: 1; grid-row: 2; border-left: none; border-bottom: 1px solid #2a3848; } }
       .panel { background: #0f1419; border-radius: 10px; padding: 12px; border: 1px solid #2a3848; min-width: 0; }
-      #edit-panel { flex: 0 0 auto; max-height: 55%; overflow-y: auto; overflow-x: hidden; }
-      .panel-bdays { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+      #edit-panel { flex: 0 0 auto; overflow: visible; }
+      .panel-bdays { flex: 1 1 0; min-height: 72px; display: flex; flex-direction: column; overflow: hidden; }
       .panel-bdays h3 { flex-shrink: 0; }
       #bday-list { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
       .panel h3 { font-size: 0.9rem; color: #8ab4cc; margin-bottom: 8px; }
