@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
   <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
   <script src="https://unpkg.com/cytoscape-node-html-label@1.2.2/dist/cytoscape-node-html-label.js"></script>
+  <script src="layout-original.js?v=3"></script>
   <script src="config.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -196,7 +197,7 @@
   function areYEdPositionsValid(positions, nodeCount) {
     if (!positions || nodeCount < 1) return false;
     const keys = Object.keys(positions);
-    if (keys.length < nodeCount) return false;
+    if (keys.length < Math.ceil(nodeCount * 0.95)) return false;
     const xs = [];
     const ys = [];
     for (const id of keys) {
@@ -300,20 +301,20 @@
     }
   }
 
-  async function applyFileLayout() {
+  function applyFileLayout() {
     syncYEdPositionsFromXml();
     let yEd = collectYEdPositions(STATE.nodes);
-    const broken = !areYEdPositionsValid(yEd, STATE.nodes.length) || isGridLikeLayout(yEd, STATE.nodes.length);
-    if (broken) {
-      const fb = await loadLayoutFallback();
+    STATE.layoutFromFallback = false;
+
+    if (!areYEdPositionsValid(yEd, STATE.nodes.length) || isGridLikeLayout(yEd, STATE.nodes.length)) {
+      const fb = window.UKROP_ORIGINAL_LAYOUT;
       if (fb) {
         applyPositionsFromMap(fb);
         yEd = collectYEdPositions(STATE.nodes);
         STATE.layoutFromFallback = true;
       }
-    } else {
-      STATE.layoutFromFallback = false;
     }
+
     const ok = areYEdPositionsValid(yEd, STATE.nodes.length) && !isGridLikeLayout(yEd, STATE.nodes.length);
     STATE.nodePositions = ok ? yEd : null;
     STATE.view = null;
@@ -325,8 +326,8 @@
     try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
   }
 
-  async function resetGraphLayout() {
-    await applyFileLayout();
+  function resetGraphLayout() {
+    applyFileLayout();
     try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
     writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
     if (STATE.layoutFromFallback) STATE.dirty = true;
@@ -524,9 +525,10 @@
     if (!graph) throw new Error('В GraphML нет элемента graph');
 
     const nodes = [];
-    for (let i = 0; i < graph.children.length; i++) {
-      const nodeEl = graph.children[i];
-      if (nodeEl.localName !== 'node') continue;
+    const nodeEls = graph.getElementsByTagName('node');
+    for (let ni = 0; ni < nodeEls.length; ni++) {
+      const nodeEl = nodeEls[ni];
+      if (nodeEl.parentElement !== graph) continue;
       const id = nodeEl.getAttribute('id');
       const attrs = {};
       nodeEl.querySelectorAll(':scope > data').forEach(d => {
@@ -582,9 +584,10 @@
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const edges = [];
-    for (let i = 0; i < graph.children.length; i++) {
-      const edgeEl = graph.children[i];
-      if (edgeEl.localName !== 'edge') continue;
+    const edgeEls = graph.getElementsByTagName('edge');
+    for (let ei = 0; ei < edgeEls.length; ei++) {
+      const edgeEl = edgeEls[ei];
+      if (edgeEl.parentElement !== graph) continue;
       const source = edgeEl.getAttribute('source');
       const target = edgeEl.getAttribute('target');
       if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) continue;
@@ -823,7 +826,7 @@
       STATE.labelKeyId = parsed.labelKeyId;
       STATE.userTagsKeyId = parsed.userTagsKeyId;
       resolveInitialLayout(parsed.nodes, parsed.ukropView, STATE.code);
-      await applyFileLayout();
+      applyFileLayout();
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -860,9 +863,9 @@
       renderLogin();
     };
 
-    document.getElementById('btn-reset-layout').onclick = async () => {
+    document.getElementById('btn-reset-layout').onclick = () => {
       if (confirm('Вернуть расположение из GraphML (yEd) и сбросить масштаб?')) {
-        await resetGraphLayout();
+        resetGraphLayout();
       }
     };
 
@@ -902,6 +905,21 @@
     renderEditPanel(null);
   }
 
+  function applyPositionsOnCy(cy) {
+    if (!STATE.nodePositions) return false;
+    let applied = 0;
+    for (const n of STATE.nodes) {
+      const p = STATE.nodePositions[n.id];
+      if (!p || typeof p.x !== 'number') continue;
+      const el = cy.getElementById(n.id);
+      if (el.nonempty()) {
+        el.position({ x: p.x, y: p.y });
+        applied++;
+      }
+    }
+    return applied >= Math.ceil(STATE.nodes.length * 0.95);
+  }
+
   function renderGraph(opts = {}) {
     const container = document.getElementById('cy');
     if (!container) return;
@@ -915,15 +933,11 @@
       STATE.cy = null;
     }
 
-    const hasPositions = areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length);
+    const hasPositions = areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length)
+      && !isGridLikeLayout(STATE.nodePositions, STATE.nodes.length);
 
     const elements = [
-      ...STATE.nodes.map(n => {
-        const item = { data: nodeCyData(n) };
-        const p = STATE.nodePositions?.[n.id];
-        if (hasPositions && p) item.position = { x: p.x, y: p.y };
-        return item;
-      }),
+      ...STATE.nodes.map(n => ({ data: nodeCyData(n) })),
       ...STATE.edges.map(e => ({ data: { id: e.id, source: e.source, target: e.target } })),
     ];
 
@@ -952,32 +966,42 @@
       ],
     });
 
-    const layout = hasPositions
-      ? null
-      : STATE.cy.layout({
-          name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
-          nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
-        });
+    const positioned = hasPositions && applyPositionsOnCy(STATE.cy);
 
     const finishLayout = () => {
       STATE.cy.resize();
-      if (hasPositions && STATE.view && !shouldFit) {
-        restoreGraphView(STATE.cy);
-      } else {
+      if (positioned) {
+        if (STATE.view && !shouldFit) restoreGraphView(STATE.cy);
+        else STATE.cy.fit(null, 60);
+        STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+        STATE.skipViewRestore = false;
+        if (selectedId) {
+          const sel = STATE.cy.getElementById(selectedId);
+          if (sel.nonempty()) sel.select();
+        }
+        setupHtmlLabels(STATE.cy);
+        return;
+      }
+      const layout = STATE.cy.layout({
+        name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
+        nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
+      });
+      layout.one('layoutstop', () => {
+        STATE.cy.resize();
         STATE.cy.fit(null, 60);
         STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
         STATE.skipViewRestore = false;
-      }
-      if (selectedId) {
-        const sel = STATE.cy.getElementById(selectedId);
-        if (sel.nonempty()) sel.select();
-      }
-      setupHtmlLabels(STATE.cy);
+        if (selectedId) {
+          const sel = STATE.cy.getElementById(selectedId);
+          if (sel.nonempty()) sel.select();
+        }
+        setupHtmlLabels(STATE.cy);
+      });
+      layout.run();
     };
 
-    if (layout) {
-      layout.one('layoutstop', finishLayout);
-      layout.run();
+    if (positioned) {
+      requestAnimationFrame(() => requestAnimationFrame(finishLayout));
     } else {
       finishLayout();
     }
