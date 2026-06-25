@@ -629,6 +629,52 @@
     return new XMLSerializer().serializeToString(STATE.xmlDoc);
   }
 
+  async function persistToDrive() {
+    stripUkropViewFromDoc();
+    await saveGraphML(STATE.code, serializeGraphML());
+    STATE.dirty = false;
+    document.getElementById('btn-save')?.classList.remove('dirty');
+  }
+
+  function setSaveStatus(message, clearMs = 0) {
+    const st = document.getElementById('save-status');
+    if (!st) return;
+    st.textContent = message;
+    if (clearMs > 0) {
+      setTimeout(() => { if (st.textContent === message) st.textContent = ''; }, clearMs);
+    }
+  }
+
+  async function applyAndSaveToDrive(nodeId) {
+    const result = applyEditPanel(nodeId);
+    if (!result.ok) {
+      alert(result.error || 'Не удалось применить');
+      return;
+    }
+
+    const btnSave = document.getElementById('btn-save');
+    const btnApply = document.getElementById('edit-apply');
+    if (btnSave) btnSave.disabled = true;
+    if (btnApply) btnApply.disabled = true;
+    setSaveStatus('Сохранение...');
+
+    try {
+      await persistToDrive();
+      renderEditPanel(nodeId);
+      setSaveStatus('✓ Применено и сохранено на Drive', 4000);
+    } catch (e) {
+      setSaveStatus('');
+      btnSave?.classList.add('dirty');
+      renderEditPanel(nodeId);
+      alert(e.message);
+    } finally {
+      const saveBtn = document.getElementById('btn-save');
+      const applyBtn = document.getElementById('edit-apply');
+      if (saveBtn) saveBtn.disabled = false;
+      if (applyBtn) applyBtn.disabled = false;
+    }
+  }
+
   // ─── UI helpers ───
   function esc(s) {
     const d = document.createElement('div');
@@ -786,19 +832,14 @@
 
     document.getElementById('btn-save').onclick = async () => {
       const btn = document.getElementById('btn-save');
-      const st = document.getElementById('save-status');
       btn.disabled = true;
-      st.textContent = 'Сохранение...';
+      setSaveStatus('Сохранение...');
       try {
         applyPendingEditsFromPanel();
-        stripUkropViewFromDoc();
-        await saveGraphML(STATE.code, serializeGraphML());
-        STATE.dirty = false;
-        btn.classList.remove('dirty');
-        st.textContent = '✓ Сохранено на Google Drive';
-        setTimeout(() => { st.textContent = ''; }, 3000);
+        await persistToDrive();
+        setSaveStatus('✓ Сохранено на Google Drive', 3000);
       } catch (e) {
-        st.textContent = '';
+        setSaveStatus('');
         alert(e.message);
       }
       btn.disabled = false;
@@ -943,10 +984,7 @@
         renderEditPanel(id);
       };
       document.getElementById('edit-apply').onclick = () => {
-        const result = applyEditPanel(id);
-        if (!result.ok) { alert(result.error || 'Не удалось применить'); return; }
-        document.getElementById('btn-save').classList.add('dirty');
-        renderEditPanel(id);
+        applyAndSaveToDrive(id);
       };
       wireEditPanelAutoApply(id);
       scheduleCyResize();
@@ -982,10 +1020,7 @@
       renderEditPanel(id);
     };
     document.getElementById('edit-apply').onclick = () => {
-      const result = applyEditPanel(id);
-      if (!result.ok) { alert(result.error || 'Не удалось применить'); return; }
-      document.getElementById('btn-save').classList.add('dirty');
-      renderEditPanel(id);
+      applyAndSaveToDrive(id);
     };
     wireEditPanelAutoApply(id);
     scheduleCyResize();
