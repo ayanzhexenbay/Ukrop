@@ -36,6 +36,9 @@
     dirty: false,
     cy: null,
     selectedId: null,
+    view: null,
+    nodePositions: null,
+    viewTimer: null,
   };
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
@@ -98,6 +101,81 @@
     const text = (jsonEl ? jsonEl.textContent : dataEl.textContent || '').trim();
     if (!text) return {};
     try { return JSON.parse(text); } catch { return {}; }
+  }
+
+  function readGraphMeta(doc, keyMap) {
+    const graph = doc.querySelector('graph');
+    if (!graph) return {};
+    const kid = findUserTagsKeyId(keyMap);
+    const dataEl = graph.querySelector(':scope > data[key="' + kid + '"]');
+    return readJsonFromDataEl(dataEl);
+  }
+
+  function writeGraphView(doc, keyMap, view) {
+    const graph = doc.querySelector('graph');
+    if (!graph) return;
+    const kid = findUserTagsKeyId(keyMap);
+    let dataEl = graph.querySelector(':scope > data[key="' + kid + '"]');
+    if (!dataEl) {
+      dataEl = doc.createElement('data');
+      dataEl.setAttribute('key', kid);
+      graph.insertBefore(dataEl, graph.firstChild);
+    }
+    const wrapper = readJsonFromDataEl(dataEl);
+    wrapper.ukropView = view;
+    let jsonEl = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'Json');
+    if (!jsonEl) {
+      jsonEl = doc.createElement('y:Json');
+      dataEl.appendChild(jsonEl);
+    }
+    jsonEl.textContent = JSON.stringify(wrapper);
+  }
+
+  function captureGraphView() {
+    if (!STATE.cy) return;
+    STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+    const pos = {};
+    STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
+    STATE.nodePositions = pos;
+    try {
+      if (STATE.code) {
+        sessionStorage.setItem('ukrop_view_' + STATE.code, JSON.stringify({
+          view: STATE.view, positions: pos,
+        }));
+      }
+    } catch { /* quota */ }
+  }
+
+  function restoreGraphView(cy) {
+    if (!STATE.view) return;
+    if (typeof STATE.view.zoom === 'number') cy.zoom(STATE.view.zoom);
+    if (STATE.view.pan) cy.pan(STATE.view.pan);
+  }
+
+  function persistViewToGraph() {
+    captureGraphView();
+    writeGraphView(STATE.xmlDoc, STATE.keyMap, {
+      zoom: STATE.view?.zoom,
+      pan: STATE.view?.pan,
+      positions: STATE.nodePositions || {},
+    });
+  }
+
+  function loadViewState(ukropView, code) {
+    if (ukropView && ukropView.positions && Object.keys(ukropView.positions).length) {
+      STATE.view = { zoom: ukropView.zoom, pan: ukropView.pan };
+      STATE.nodePositions = ukropView.positions;
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem('ukrop_view_' + code);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.positions && Object.keys(saved.positions).length) {
+        STATE.view = saved.view;
+        STATE.nodePositions = saved.positions;
+      }
+    } catch { /* ignore */ }
   }
 
   function splitCoupleName(label) {
@@ -331,7 +409,9 @@
       });
     });
 
-    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId, userTagsKeyId };
+    const graphMeta = readGraphMeta(doc, keyMap);
+
+    return { doc, keyMap, nodes, edges, birthdayKeyId, labelKeyId, userTagsKeyId, ukropView: graphMeta.ukropView };
   }
 
   function findKeyByName(keyMap, name) {
@@ -513,6 +593,7 @@
       STATE.birthdayKeyId = parsed.birthdayKeyId;
       STATE.labelKeyId = parsed.labelKeyId;
       STATE.userTagsKeyId = parsed.userTagsKeyId;
+      loadViewState(parsed.ukropView, STATE.code);
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -554,6 +635,7 @@
       btn.disabled = true;
       st.textContent = 'Сохранение...';
       try {
+        persistViewToGraph();
         await saveGraphML(STATE.code, serializeGraphML());
         STATE.dirty = false;
         btn.classList.remove('dirty');
@@ -575,22 +657,38 @@
     const container = document.getElementById('cy');
     if (!container) return;
 
-    if (STATE.cy) STATE.cy.destroy();
+    const selectedId = STATE.selectedId;
+
+    if (STATE.cy) {
+      captureGraphView();
+      STATE.cy.destroy();
+      STATE.cy = null;
+    }
+
+    const hasPositions = STATE.nodePositions && Object.keys(STATE.nodePositions).length > 0;
 
     const elements = [
-      ...STATE.nodes.map(n => ({
-        data: {
-          id: n.id,
-          label: n.label + ukropNodeSublabel(n.ukrop),
-          kind: n.kind,
-        },
-      })),
+      ...STATE.nodes.map(n => {
+        const item = {
+          data: {
+            id: n.id,
+            label: n.label + ukropNodeSublabel(n.ukrop),
+            kind: n.kind,
+          },
+        };
+        const p = STATE.nodePositions?.[n.id];
+        if (p) item.position = { x: p.x, y: p.y };
+        return item;
+      }),
       ...STATE.edges.map(e => ({ data: { id: e.id, source: e.source, target: e.target } })),
     ];
 
     STATE.cy = cytoscape({
       container,
       elements,
+      minZoom: 0.12,
+      maxZoom: 4,
+      wheelSensitivity: 0.28,
       style: [
         { selector: 'node', style: {
           'background-color': '#3d8f5a', 'label': 'data(label)', 'color': '#e8edf5',
@@ -609,7 +707,30 @@
           'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
         }},
       ],
-      layout: { name: 'dagre', rankDir: 'TB', nodeSep: 40, rankSep: 60, animate: true },
+    });
+
+    const layout = STATE.cy.layout(hasPositions
+      ? { name: 'preset' }
+      : { name: 'dagre', rankDir: 'TB', nodeSep: 40, rankSep: 60, animate: false }
+    );
+
+    layout.one('layoutstop', () => {
+      if (hasPositions && STATE.view) {
+        restoreGraphView(STATE.cy);
+      } else {
+        STATE.cy.fit(null, 50);
+        captureGraphView();
+      }
+      if (selectedId) {
+        const sel = STATE.cy.getElementById(selectedId);
+        if (sel.nonempty()) sel.select();
+      }
+    });
+    layout.run();
+
+    STATE.cy.on('pan zoom', () => {
+      clearTimeout(STATE.viewTimer);
+      STATE.viewTimer = setTimeout(captureGraphView, 300);
     });
 
     STATE.cy.on('tap', 'node', evt => {
