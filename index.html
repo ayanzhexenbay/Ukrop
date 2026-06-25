@@ -40,6 +40,7 @@
     view: null,
     nodePositions: null,
     viewTimer: null,
+    skipViewRestore: false,
   };
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
@@ -239,26 +240,22 @@
     }
   }
 
-  function resolveInitialLayout(nodes, ukropView, code) {
-    STATE.nodePositions = null;
+  function applyFileLayout(nodes) {
+    const list = nodes || STATE.nodes;
+    if (list === STATE.nodes) syncYEdPositionsFromXml();
+    const yEd = collectYEdPositions(list);
+    STATE.nodePositions = areYEdPositionsValid(yEd, list.length) ? yEd : null;
     STATE.view = null;
+    STATE.skipViewRestore = true;
+  }
+
+  function resolveInitialLayout(nodes, ukropView, code) {
     try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
-
-    const yEd = collectYEdPositions(nodes);
-    if (areYEdPositionsValid(yEd, nodes.length)) {
-      STATE.nodePositions = yEd;
-    }
-
-    if (ukropView && typeof ukropView.zoom === 'number' && ukropView.pan) {
-      STATE.view = { zoom: ukropView.zoom, pan: ukropView.pan };
-    }
+    applyFileLayout(nodes);
   }
 
   function resetGraphLayout() {
-    syncYEdPositionsFromXml();
-    const yEd = collectYEdPositions(STATE.nodes);
-    STATE.nodePositions = areYEdPositionsValid(yEd, STATE.nodes.length) ? yEd : null;
-    STATE.view = null;
+    applyFileLayout();
     try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
     writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
     renderGraph({ fit: true });
@@ -807,7 +804,9 @@
       btn.disabled = false;
     };
 
-    renderGraph();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => renderGraph({ fit: true }));
+    });
     renderBirthdays();
     renderEditPanel(null);
   }
@@ -817,7 +816,7 @@
     if (!container) return;
 
     const selectedId = STATE.selectedId;
-    const forceFit = opts.fit === true;
+    const shouldFit = opts.fit === true || STATE.skipViewRestore;
 
     if (STATE.cy) {
       captureGraphView();
@@ -825,7 +824,7 @@
       STATE.cy = null;
     }
 
-    const hasPositions = !forceFit && areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length);
+    const hasPositions = areYEdPositionsValid(STATE.nodePositions, STATE.nodes.length);
 
     const elements = [
       ...STATE.nodes.map(n => {
@@ -871,15 +870,17 @@
     );
 
     layout.one('layoutstop', () => {
-      if (hasPositions && STATE.view && !forceFit) {
+      STATE.cy.resize();
+      if (hasPositions && STATE.view && !shouldFit) {
         restoreGraphView(STATE.cy);
       } else {
         STATE.cy.fit(null, 60);
         STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+        STATE.skipViewRestore = false;
       }
-      if (hasPositions && !forceFit) {
+      if (hasPositions && !shouldFit) {
         captureGraphView();
-      } else {
+      } else if (!hasPositions) {
         const pos = {};
         STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
         STATE.nodePositions = pos;
