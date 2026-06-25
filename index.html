@@ -156,31 +156,31 @@
   }
 
   function parseNodeGeometry(nodeEl, geometryKeyId) {
-    if (geometryKeyId) {
-      const dataEl = nodeEl.querySelector(':scope > data[key="' + geometryKeyId + '"]');
-      if (dataEl) {
-        const rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
-        if (rect) {
-          const x = parseFloat(rect.getAttribute('X'));
-          const y = parseFloat(rect.getAttribute('Y'));
-          const w = parseFloat(rect.getAttribute('Width')) || 100;
-          const h = parseFloat(rect.getAttribute('Height')) || 30;
-          if (!Number.isNaN(x) && !Number.isNaN(y)) {
-            return { x: x + w / 2, y: y + h / 2, w, h };
-          }
-        }
-      }
-    }
-    const all = nodeEl.getElementsByTagName('*');
-    for (let i = 0; i < all.length; i++) {
-      const el = all[i];
-      if (el.localName === 'RectD') {
+    const readRect = dataEl => {
+      const all = dataEl.getElementsByTagName('*');
+      for (let i = 0; i < all.length; i++) {
+        const el = all[i];
+        if (el.localName !== 'RectD') continue;
         const x = parseFloat(el.getAttribute('X'));
         const y = parseFloat(el.getAttribute('Y'));
         const w = parseFloat(el.getAttribute('Width')) || 100;
         const h = parseFloat(el.getAttribute('Height')) || 30;
         if (!Number.isNaN(x) && !Number.isNaN(y)) return { x: x + w / 2, y: y + h / 2, w, h };
       }
+      return null;
+    };
+    for (let i = 0; i < nodeEl.children.length; i++) {
+      const child = nodeEl.children[i];
+      if (child.localName !== 'data') continue;
+      if (geometryKeyId && child.getAttribute('key') !== geometryKeyId) continue;
+      const pos = readRect(child);
+      if (pos) return pos;
+    }
+    for (let i = 0; i < nodeEl.children.length; i++) {
+      const child = nodeEl.children[i];
+      if (child.localName !== 'data') continue;
+      const pos = readRect(child);
+      if (pos) return pos;
     }
     return null;
   }
@@ -231,8 +231,10 @@
   async function loadLayoutFallback() {
     if (layoutFallbackCache) return layoutFallbackCache;
     try {
-      const res = await fetch('layout-original.json');
-      if (res.ok) layoutFallbackCache = await res.json();
+      const res = await fetch('layout-original.json?v=2');
+      if (!res.ok) return null;
+      const text = (await res.text()).replace(/^\uFEFF/, '').trim();
+      layoutFallbackCache = JSON.parse(text);
     } catch { /* offline */ }
     return layoutFallbackCache;
   }
@@ -518,9 +520,13 @@
       v.forType === 'node' && v.name === 'NodeGeometry'
     )?.[0];
 
+    const graph = doc.getElementsByTagName('graph')[0];
+    if (!graph) throw new Error('В GraphML нет элемента graph');
+
     const nodes = [];
-    doc.querySelectorAll('graph > node, node').forEach(nodeEl => {
-      if (nodeEl.parentElement && nodeEl.parentElement.tagName === 'node') return;
+    for (let i = 0; i < graph.children.length; i++) {
+      const nodeEl = graph.children[i];
+      if (nodeEl.localName !== 'node') continue;
       const id = nodeEl.getAttribute('id');
       const attrs = {};
       nodeEl.querySelectorAll(':scope > data').forEach(d => {
@@ -570,21 +576,23 @@
         id, label: ukropDisplayLabel(ukrop), birthday, el: nodeEl, attrs, ukrop,
         kind: nodeKind(ukrop), yEdPos: parseNodeGeometry(nodeEl, geometryKeyId),
       });
-    });
+    }
 
     const userTagsKeyId = findUserTagsKeyId(keyMap);
 
     const nodeIds = new Set(nodes.map(n => n.id));
     const edges = [];
-    doc.querySelectorAll('graph > edge, edge').forEach(edgeEl => {
+    for (let i = 0; i < graph.children.length; i++) {
+      const edgeEl = graph.children[i];
+      if (edgeEl.localName !== 'edge') continue;
       const source = edgeEl.getAttribute('source');
       const target = edgeEl.getAttribute('target');
-      if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) return;
+      if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) continue;
       edges.push({
         id: edgeEl.getAttribute('id') || (source + '_' + target),
         source, target,
       });
-    });
+    }
 
     const graphMeta = readGraphMeta(doc, keyMap);
 
