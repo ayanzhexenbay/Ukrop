@@ -41,6 +41,7 @@
     nodePositions: null,
     viewTimer: null,
     skipViewRestore: false,
+    layoutFromFallback: false,
   };
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
@@ -134,12 +135,16 @@
     jsonEl.textContent = JSON.stringify(wrapper);
   }
 
-  function captureGraphView() {
+  function capturePanZoom() {
     if (!STATE.cy) return;
     STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
+  }
+
+  function captureGraphView() {
+    capturePanZoom();
     const pos = {};
     STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    if (areYEdPositionsValid(pos, STATE.nodes.length)) {
+    if (areYEdPositionsValid(pos, STATE.nodes.length) && !isGridLikeLayout(pos, STATE.nodes.length)) {
       STATE.nodePositions = pos;
     }
   }
@@ -205,6 +210,59 @@
     return spreadX > 50 || spreadY > 50;
   }
 
+  function isGridLikeLayout(positions, nodeCount) {
+    if (!positions || nodeCount < 20) return false;
+    const ys = [];
+    const xs = [];
+    for (const id of Object.keys(positions)) {
+      ys.push(Math.round(positions[id].y / 12) * 12);
+      xs.push(Math.round(positions[id].x / 50) * 50);
+    }
+    const uniqueY = new Set(ys).size;
+    const uniqueX = new Set(xs).size;
+    if (uniqueY > 14 || uniqueX < Math.sqrt(nodeCount)) return false;
+    const rowCounts = {};
+    ys.forEach(y => { rowCounts[y] = (rowCounts[y] || 0) + 1; });
+    const filledRows = Object.values(rowCounts).filter(c => c >= 3).length;
+    return filledRows >= 4 && uniqueY <= 12;
+  }
+
+  let layoutFallbackCache = null;
+  async function loadLayoutFallback() {
+    if (layoutFallbackCache) return layoutFallbackCache;
+    try {
+      const res = await fetch('layout-original.json');
+      if (res.ok) layoutFallbackCache = await res.json();
+    } catch { /* offline */ }
+    return layoutFallbackCache;
+  }
+
+  function applyPositionsFromMap(posMap) {
+    const geomKey = findGeometryKeyId(STATE.keyMap);
+    for (const n of STATE.nodes) {
+      const p = posMap[n.id];
+      if (!p || !n.el) continue;
+      const w = p.w || 100;
+      const h = p.h || 30;
+      n.yEdPos = { x: p.x, y: p.y, w, h };
+      let dataEl = n.el.querySelector(':scope > data[key="' + geomKey + '"]');
+      if (!dataEl) {
+        dataEl = STATE.xmlDoc.createElement('data');
+        dataEl.setAttribute('key', geomKey);
+        n.el.appendChild(dataEl);
+      }
+      let rect = [...dataEl.getElementsByTagName('*')].find(e => e.localName === 'RectD');
+      if (!rect) {
+        rect = STATE.xmlDoc.createElement('y:RectD');
+        dataEl.appendChild(rect);
+      }
+      rect.setAttribute('X', String(p.x - w / 2));
+      rect.setAttribute('Y', String(p.y - h / 2));
+      rect.setAttribute('Width', String(w));
+      rect.setAttribute('Height', String(h));
+    }
+  }
+
   function syncYEdPositionsFromXml() {
     const geomKey = findGeometryKeyId(STATE.keyMap);
     for (const n of STATE.nodes) {
@@ -240,25 +298,37 @@
     }
   }
 
-  function applyFileLayout(nodes) {
-    const list = nodes || STATE.nodes;
-    if (list === STATE.nodes) syncYEdPositionsFromXml();
-    const yEd = collectYEdPositions(list);
-    STATE.nodePositions = areYEdPositionsValid(yEd, list.length) ? yEd : null;
+  async function applyFileLayout() {
+    syncYEdPositionsFromXml();
+    let yEd = collectYEdPositions(STATE.nodes);
+    const broken = !areYEdPositionsValid(yEd, STATE.nodes.length) || isGridLikeLayout(yEd, STATE.nodes.length);
+    if (broken) {
+      const fb = await loadLayoutFallback();
+      if (fb) {
+        applyPositionsFromMap(fb);
+        yEd = collectYEdPositions(STATE.nodes);
+        STATE.layoutFromFallback = true;
+      }
+    } else {
+      STATE.layoutFromFallback = false;
+    }
+    const ok = areYEdPositionsValid(yEd, STATE.nodes.length) && !isGridLikeLayout(yEd, STATE.nodes.length);
+    STATE.nodePositions = ok ? yEd : null;
     STATE.view = null;
     STATE.skipViewRestore = true;
+    return ok;
   }
 
   function resolveInitialLayout(nodes, ukropView, code) {
     try { sessionStorage.removeItem('ukrop_view_' + code); } catch { /* */ }
-    applyFileLayout(nodes);
   }
 
-  function resetGraphLayout() {
-    applyFileLayout();
+  async function resetGraphLayout() {
+    await applyFileLayout();
     try { sessionStorage.removeItem('ukrop_view_' + STATE.code); } catch { /* */ }
     writeGraphView(STATE.xmlDoc, STATE.keyMap, null);
-    renderGraph({ fit: true });
+    if (STATE.layoutFromFallback) STATE.dirty = true;
+    renderGraph({ fit: true, ignoreCapture: true });
   }
 
   function restoreGraphView(cy) {
@@ -272,7 +342,7 @@
     STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
     const pos = {};
     STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    if (!areYEdPositionsValid(pos, STATE.nodes.length)) return;
+    if (!areYEdPositionsValid(pos, STATE.nodes.length) || isGridLikeLayout(pos, STATE.nodes.length)) return;
     STATE.nodePositions = pos;
     writeYEdPositionsToXml(pos);
     writeGraphView(STATE.xmlDoc, STATE.keyMap, {
@@ -745,6 +815,7 @@
       STATE.labelKeyId = parsed.labelKeyId;
       STATE.userTagsKeyId = parsed.userTagsKeyId;
       resolveInitialLayout(parsed.nodes, parsed.ukropView, STATE.code);
+      await applyFileLayout();
       STATE.dirty = false;
       renderMain();
     } catch (e) {
@@ -781,8 +852,10 @@
       renderLogin();
     };
 
-    document.getElementById('btn-reset-layout').onclick = () => {
-      if (confirm('Вернуть расположение из GraphML (yEd) и сбросить масштаб?')) resetGraphLayout();
+    document.getElementById('btn-reset-layout').onclick = async () => {
+      if (confirm('Вернуть расположение из GraphML (yEd) и сбросить масштаб?')) {
+        await resetGraphLayout();
+      }
     };
 
     document.getElementById('btn-save').onclick = async () => {
@@ -805,7 +878,17 @@
     };
 
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => renderGraph({ fit: true }));
+      requestAnimationFrame(() => {
+        renderGraph({ fit: true });
+        if (STATE.layoutFromFallback) {
+          const st = document.getElementById('save-status');
+          if (st) {
+            st.textContent = 'Восстановлен оригинальный вид — сохраните на Drive';
+            document.getElementById('btn-save')?.classList.add('dirty');
+            STATE.dirty = true;
+          }
+        }
+      });
     });
     renderBirthdays();
     renderEditPanel(null);
@@ -819,7 +902,7 @@
     const shouldFit = opts.fit === true || STATE.skipViewRestore;
 
     if (STATE.cy) {
-      captureGraphView();
+      if (!opts.ignoreCapture) capturePanZoom();
       STATE.cy.destroy();
       STATE.cy = null;
     }
@@ -861,15 +944,14 @@
       ],
     });
 
-    const layout = STATE.cy.layout(hasPositions
-      ? { name: 'preset', fit: false }
-      : {
+    const layout = hasPositions
+      ? null
+      : STATE.cy.layout({
           name: 'dagre', rankDir: 'TB', ranker: 'network-simplex',
           nodeSep: 55, rankSep: 90, edgeSep: 20, animate: false, fit: false,
-        }
-    );
+        });
 
-    layout.one('layoutstop', () => {
+    const finishLayout = () => {
       STATE.cy.resize();
       if (hasPositions && STATE.view && !shouldFit) {
         restoreGraphView(STATE.cy);
@@ -878,21 +960,19 @@
         STATE.view = { zoom: STATE.cy.zoom(), pan: STATE.cy.pan() };
         STATE.skipViewRestore = false;
       }
-      if (hasPositions && !shouldFit) {
-        captureGraphView();
-      } else if (!hasPositions) {
-        const pos = {};
-        STATE.cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-        STATE.nodePositions = pos;
-        captureGraphView();
-      }
       if (selectedId) {
         const sel = STATE.cy.getElementById(selectedId);
         if (sel.nonempty()) sel.select();
       }
       setupHtmlLabels(STATE.cy);
-    });
-    layout.run();
+    };
+
+    if (layout) {
+      layout.one('layoutstop', finishLayout);
+      layout.run();
+    } else {
+      finishLayout();
+    }
 
     STATE.cy.on('pan zoom', () => {
       clearTimeout(STATE.viewTimer);
