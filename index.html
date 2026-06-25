@@ -71,14 +71,10 @@
     return 'p' + Math.random().toString(36).slice(2, 10);
   }
 
-  function genderIcon(g) {
-    return g === 'male' ? '♂' : g === 'female' ? '♀' : '';
-  }
-
   function genderRadioGroup(name, selected) {
     return `<div class="gender-row">
-      <label><input type="radio" name="${name}" value="male" ${selected === 'male' ? 'checked' : ''}> ♂ Мужчина</label>
-      <label><input type="radio" name="${name}" value="female" ${selected === 'female' ? 'checked' : ''}> ♀ Женщина</label>
+      <label><input type="radio" name="${name}" value="male" ${selected === 'male' ? 'checked' : ''}> Мужчина</label>
+      <label><input type="radio" name="${name}" value="female" ${selected === 'female' ? 'checked' : ''}> Женщина</label>
     </div>`;
   }
 
@@ -453,7 +449,8 @@
       tpl(data) {
         const bday = data.bdayLine
           ? `<div class="cy-bday">${escHtml(data.bdayLine)}</div>` : '';
-        return `<div class="cy-node-text"><div class="cy-name">${escHtml(data.nameLine)}</div>${bday}</div>`;
+        const wrapCls = bday ? 'cy-node-text has-bday' : 'cy-node-text';
+        return `<div class="${wrapCls}"><div class="cy-name">${escHtml(data.nameLine)}</div>${bday}</div>`;
       },
     }]);
   }
@@ -542,8 +539,9 @@
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
       .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; }
-      .cy-name { font-size: 12px; font-weight: 600; color: #eef2f8; }
-      .cy-bday { font-size: 9px; color: #7a8899; margin-top: 4px; font-weight: 400; }
+      .cy-name { font-size: 12px; font-weight: 600; color: #eef2f8; transform: translateY(5px); }
+      .cy-node-text.has-bday .cy-name { transform: translateY(11px); }
+      .cy-bday { font-size: 9px; color: #7a8899; margin-top: 5px; font-weight: 400; }
     `;
     document.head.appendChild(s);
   }
