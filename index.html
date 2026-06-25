@@ -140,7 +140,7 @@
 
   function ukropYEdLabel(ukrop) {
     if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
-      return ukrop.people.map(p => p.name).join('-');
+      return ukrop.people.map(p => p.name).join(' - ');
     }
     return ukrop.people[0]?.name || '';
   }
@@ -150,19 +150,13 @@
     if (ukrop.type === 'couple' && people.length >= 2) {
       const h = people.find(p => p.role === 'husband') || people[0];
       const w = people.find(p => p.role === 'wife') || people[1];
-      const hIcon = genderIcon(h.gender);
-      const wIcon = genderIcon(w.gender);
-      return `${h.name}${hIcon ? ' ' + hIcon : ''} / ${w.name}${wIcon ? ' ' + wIcon : ''}`;
+      return `${h.name} - ${w.name}`;
     }
-    const p = people[0] || {};
-    return `${p.name || '?'}${genderIcon(p.gender) ? ' ' + genderIcon(p.gender) : ''}`;
+    return people[0]?.name || '?';
   }
 
   function ukropNodeSublabel(ukrop) {
-    const parts = (ukrop.people || []).filter(p => p.birthday).map(p => {
-      const g = genderIcon(p.gender);
-      return (g ? g + ' ' : '') + formatBday(p.birthday);
-    });
+    const parts = (ukrop.people || []).filter(p => p.birthday).map(p => formatBday(p.birthday));
     return parts.length ? '\n🎂 ' + parts.join(' · ') : '';
   }
 
@@ -741,9 +735,8 @@
       let suffix = '';
       if (p.days === 0) { cls += ' today'; suffix = ' — сегодня!'; }
       else if (p.days !== null && p.days <= 14) { cls += ' soon'; suffix = ` — через ${p.days} дн.`; }
-      const g = genderIcon(p.gender);
       const role = p.role === 'husband' ? ' · муж' : p.role === 'wife' ? ' · жена' : '';
-      return `<div class="${cls}"><span>${g ? g + ' ' : ''}${esc(p.name)}${role}</span><span>${formatBday(p.birthday)}${suffix}</span></div>`;
+      return `<div class="${cls}"><span>${esc(p.name)}${role}</span><span>${formatBday(p.birthday)}${suffix}</span></div>`;
     }).join('');
   }
 
