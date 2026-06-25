@@ -552,7 +552,8 @@
       tpl(data) {
         const bday = data.bdayLine
           ? `<div class="cy-bday">${escHtml(data.bdayLine)}</div>` : '';
-        const wrapCls = bday ? 'cy-node-text has-bday' : 'cy-node-text';
+        const isCouple = data.kind === 'couple';
+        const wrapCls = ['cy-node-text', bday && 'has-bday', isCouple && bday && 'couple'].filter(Boolean).join(' ');
         return `<div class="${wrapCls}"><div class="cy-name">${escHtml(data.nameLine)}</div>${bday}</div>`;
       },
     }]);
@@ -703,7 +704,8 @@
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
       .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; }
-      .cy-node-text.has-bday { transform: translateY(8px); }
+      .cy-node-text.has-bday { transform: translateY(4px); }
+      .cy-node-text.couple.has-bday { transform: translateY(8px); }
       .cy-name { font-size: 12px; font-weight: 600; color: #eef2f8; }
       .cy-bday { font-size: 9px; color: #7a8899; margin-top: 4px; font-weight: 400; }
     `;
