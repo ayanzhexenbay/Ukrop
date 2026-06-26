@@ -43,6 +43,17 @@
 
   const MIXED_WIDE_MIN = 2;
 
+  const GEN_BG_COLORS = [
+    { color: '#8a6b3a', opacity: 0.16 },
+    { color: '#3a5a8a', opacity: 0.16 },
+    { color: '#3a7a5a', opacity: 0.16 },
+    { color: '#7a4a6a', opacity: 0.16 },
+    { color: '#6a5a3a', opacity: 0.13 },
+    { color: '#4a6a7a', opacity: 0.13 },
+    { color: '#5a4a7a', opacity: 0.13 },
+    { color: '#4a7a6a', opacity: 0.13 },
+  ];
+
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
   const BDAY_KEYS = ['birthday', 'Birthday', 'birthdate', 'День рождения', 'dob'];
   const SKIP_LABEL_KEYS = ['zOrder', 'Expanded', 'url', 'description', 'UserTags'];
@@ -547,7 +558,7 @@
   function setupHtmlLabels(cy) {
     if (!cy.nodeHtmlLabel) return;
     cy.nodeHtmlLabel([{
-      query: 'node',
+      query: 'node[!genBg]',
       halign: 'center',
       valign: 'center',
       halignBox: 'center',
@@ -909,6 +920,18 @@
       .view-hint {
         font-size: 0.72rem; color: #8899aa; line-height: 1.35; padding: 4px 6px 2px;
       }
+      .gen-legend {
+        position: absolute; left: 10px; bottom: 10px; z-index: 6;
+        background: rgba(26, 34, 45, 0.9); border: 1px solid #2a3848;
+        border-radius: 8px; padding: 8px 10px; font-size: 0.72rem;
+        color: #b8c4d4; pointer-events: none; line-height: 1.35;
+      }
+      .gen-legend-title { font-weight: 600; color: #8ab4cc; margin-bottom: 4px; }
+      .gen-legend-item { display: flex; align-items: center; gap: 7px; margin: 2px 0; }
+      .gen-legend-swatch {
+        width: 16px; height: 10px; border-radius: 3px; flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.08);
+      }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
       .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; }
@@ -1094,7 +1117,7 @@
   }
 
   function applyPngExportLabels(cy) {
-    cy.nodes().forEach(node => {
+    cy.nodes().not('[?genBg]').forEach(node => {
       const d = node.data();
       const bday = (d.bdayLine || '').trim();
       node.data('exportLabel', bday ? `${d.nameLine}\n${bday}` : d.nameLine);
@@ -1174,6 +1197,108 @@
         if (selected.nonempty()) selected.select();
       }
     });
+  }
+
+  function computeGenerations(edges, nodeIds) {
+    const children = buildChildMap(edges);
+    const roots = getGraphRoots(edges, nodeIds);
+    const gen = new Map();
+    const queue = roots.map(id => ({ id, level: 1 }));
+    roots.forEach(id => gen.set(id, 1));
+
+    while (queue.length) {
+      const { id, level } = queue.shift();
+      for (const kid of children.get(id) || []) {
+        const next = level + 1;
+        if (!gen.has(kid) || gen.get(kid) < next) {
+          gen.set(kid, next);
+          queue.push({ id: kid, level: next });
+        }
+      }
+    }
+    return gen;
+  }
+
+  function removeGenerationBackgrounds(cy) {
+    cy.nodes('[?genBg]').remove();
+  }
+
+  function updateGenLegend(generations) {
+    const workspace = document.querySelector('.workspace');
+    if (!workspace) return;
+    let legend = document.getElementById('gen-legend');
+    if (!generations.length) {
+      if (legend) legend.remove();
+      return;
+    }
+    if (!legend) {
+      legend = document.createElement('div');
+      legend.id = 'gen-legend';
+      legend.className = 'gen-legend';
+      workspace.appendChild(legend);
+    }
+    legend.innerHTML = `<div class="gen-legend-title">Поколения</div>${generations.map(g => {
+      const c = GEN_BG_COLORS[(g - 1) % GEN_BG_COLORS.length];
+      return `<div class="gen-legend-item"><span class="gen-legend-swatch" style="background:${c.color};opacity:${Math.min(1, c.opacity * 4)}"></span><span>${g} поколение</span></div>`;
+    }).join('')}`;
+  }
+
+  function applyGenerationBackgrounds(cy) {
+    removeGenerationBackgrounds(cy);
+    const realNodes = cy.nodes().not('[?genBg]');
+    const nodeIds = realNodes.map(n => n.id());
+    const genMap = computeGenerations(STATE.edges, nodeIds);
+    const byGen = new Map();
+
+    realNodes.forEach(node => {
+      const level = genMap.get(node.id());
+      if (!level) return;
+      if (!byGen.has(level)) byGen.set(level, []);
+      byGen.get(level).push(node);
+    });
+
+    const padding = 32;
+    const levels = [...byGen.keys()].sort((a, b) => a - b);
+    levels.forEach(level => {
+      const nodes = byGen.get(level);
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      nodes.forEach(n => {
+        const x = n.position('x');
+        const y = n.position('y');
+        const w = n.outerWidth();
+        const h = n.outerHeight();
+        minX = Math.min(minX, x - w / 2);
+        maxX = Math.max(maxX, x + w / 2);
+        minY = Math.min(minY, y - h / 2);
+        maxY = Math.max(maxY, y + h / 2);
+      });
+      const palette = GEN_BG_COLORS[(level - 1) % GEN_BG_COLORS.length];
+      cy.add({
+        group: 'nodes',
+        data: {
+          id: `__gen_bg_${level}`,
+          genBg: true,
+          genLevel: level,
+          bgW: maxX - minX + padding * 2,
+          bgH: maxY - minY + padding * 2,
+          bgColor: palette.color,
+          bgOpacity: palette.opacity,
+        },
+        position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+      });
+    });
+
+    cy.nodes('[?genBg]').moveToBack();
+    cy.edges().moveToFront();
+    updateGenLegend(levels);
+  }
+
+  function clearGenerationUi() {
+    const legend = document.getElementById('gen-legend');
+    if (legend) legend.remove();
   }
 
   function buildChildMap(edges) {
@@ -1448,10 +1573,18 @@
       maxZoom: 4,
       wheelSensitivity: 0.28,
       style: [
+        { selector: 'node[?genBg]', style: {
+          width: 'data(bgW)', height: 'data(bgH)',
+          'background-color': 'data(bgColor)',
+          'background-opacity': 'data(bgOpacity)',
+          'border-width': 0, shape: 'round-rectangle', 'corner-radius': 16,
+          label: '', events: 'no', 'z-index': 0,
+        }},
         { selector: 'node', style: {
           'background-color': '#3d8f5a', 'label': '', 'color': '#e8edf5',
           'width': 95, 'height': 95,
           'border-width': 2, 'border-color': '#6bcf8e',
+          'z-index': 1,
         }},
         { selector: 'node[kind = "couple"]', style: {
           'background-color': '#2d5a6a', 'border-color': '#5ab4d4', 'width': 110, 'height': 100,
@@ -1462,6 +1595,7 @@
         { selector: 'edge', style: {
           'width': 2, 'line-color': '#445566', 'target-arrow-color': '#445566',
           'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
+          'z-index': 2,
         }},
       ],
     });
@@ -1473,6 +1607,12 @@
 
     layout.one('layoutstop', () => {
       const finish = () => {
+        if (STATE.viewMode === 'mixed') {
+          applyGenerationBackgrounds(STATE.cy);
+        } else {
+          removeGenerationBackgrounds(STATE.cy);
+          clearGenerationUi();
+        }
         STATE.cy.resize();
         STATE.cy.fit(null, 60);
         if (selectedId) {
@@ -1499,6 +1639,7 @@
     });
 
     STATE.cy.on('tap', 'node', evt => {
+      if (evt.target.data('genBg')) return;
       const id = evt.target.id();
       STATE.selectedId = id;
       renderEditPanel(id);
