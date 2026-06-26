@@ -44,14 +44,14 @@
   const MIXED_WIDE_MIN = 2;
 
   const GEN_BG_COLORS = [
-    { color: '#8a6b3a', opacity: 0.16 },
-    { color: '#3a5a8a', opacity: 0.16 },
-    { color: '#3a7a5a', opacity: 0.16 },
-    { color: '#7a4a6a', opacity: 0.16 },
-    { color: '#6a5a3a', opacity: 0.13 },
-    { color: '#4a6a7a', opacity: 0.13 },
-    { color: '#5a4a7a', opacity: 0.13 },
-    { color: '#4a7a6a', opacity: 0.13 },
+    { color: '#8a6b3a', opacity: 0.22 },
+    { color: '#3a5a8a', opacity: 0.22 },
+    { color: '#3a7a5a', opacity: 0.22 },
+    { color: '#7a4a6a', opacity: 0.22 },
+    { color: '#6a5a3a', opacity: 0.18 },
+    { color: '#4a6a7a', opacity: 0.18 },
+    { color: '#5a4a7a', opacity: 0.18 },
+    { color: '#4a7a6a', opacity: 0.18 },
   ];
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
@@ -558,12 +558,13 @@
   function setupHtmlLabels(cy) {
     if (!cy.nodeHtmlLabel) return;
     cy.nodeHtmlLabel([{
-      query: 'node[!genBg]',
+      query: 'node',
       halign: 'center',
       valign: 'center',
       halignBox: 'center',
       valignBox: 'center',
       tpl(data) {
+        if (data.genBg) return '';
         const bday = data.bdayLine
           ? `<div class="cy-bday">${escHtml(data.bdayLine)}</div>` : '';
         const isCouple = data.kind === 'couple';
@@ -932,6 +933,14 @@
         width: 16px; height: 10px; border-radius: 3px; flex-shrink: 0;
         border: 1px solid rgba(255,255,255,0.08);
       }
+      #gen-bg-layer {
+        position: absolute; inset: 0; z-index: 0;
+        pointer-events: none; overflow: hidden;
+      }
+      #cy { position: relative; z-index: 1; }
+      .gen-bg-band {
+        position: absolute; border-radius: 16px; pointer-events: none;
+      }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
       .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; }
@@ -1117,7 +1126,7 @@
   }
 
   function applyPngExportLabels(cy) {
-    cy.nodes().not('[?genBg]').forEach(node => {
+    cy.nodes().forEach(node => {
       const d = node.data();
       const bday = (d.bdayLine || '').trim();
       node.data('exportLabel', bday ? `${d.nameLine}\n${bday}` : d.nameLine);
@@ -1219,8 +1228,20 @@
     return gen;
   }
 
+  let genBgSyncHandler = null;
+
   function removeGenerationBackgrounds(cy) {
-    cy.nodes('[?genBg]').remove();
+    const layer = document.getElementById('gen-bg-layer');
+    if (layer) layer.innerHTML = '';
+    if (cy && genBgSyncHandler) {
+      cy.off('pan zoom resize render', genBgSyncHandler);
+      genBgSyncHandler = null;
+    }
+  }
+
+  function clearGenerationUi() {
+    const legend = document.getElementById('gen-legend');
+    if (legend) legend.remove();
   }
 
   function updateGenLegend(generations) {
@@ -1245,60 +1266,64 @@
 
   function applyGenerationBackgrounds(cy) {
     removeGenerationBackgrounds(cy);
-    const realNodes = cy.nodes().not('[?genBg]');
-    const nodeIds = realNodes.map(n => n.id());
+    const layer = document.getElementById('gen-bg-layer');
+    if (!layer) return;
+
+    const nodeIds = cy.nodes().map(n => n.id());
     const genMap = computeGenerations(STATE.edges, nodeIds);
     const byGen = new Map();
 
-    realNodes.forEach(node => {
+    cy.nodes().forEach(node => {
       const level = genMap.get(node.id());
       if (!level) return;
       if (!byGen.has(level)) byGen.set(level, []);
       byGen.get(level).push(node);
     });
 
-    const padding = 32;
+    const padding = 28;
     const levels = [...byGen.keys()].sort((a, b) => a - b);
+    const bands = [];
+
     levels.forEach(level => {
       const nodes = byGen.get(level);
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      nodes.forEach(n => {
-        const x = n.position('x');
-        const y = n.position('y');
-        const w = n.outerWidth();
-        const h = n.outerHeight();
-        minX = Math.min(minX, x - w / 2);
-        maxX = Math.max(maxX, x + w / 2);
-        minY = Math.min(minY, y - h / 2);
-        maxY = Math.max(maxY, y + h / 2);
-      });
       const palette = GEN_BG_COLORS[(level - 1) % GEN_BG_COLORS.length];
-      cy.add({
-        group: 'nodes',
-        data: {
-          id: `__gen_bg_${level}`,
-          genBg: true,
-          genLevel: level,
-          bgW: maxX - minX + padding * 2,
-          bgH: maxY - minY + padding * 2,
-          bgColor: palette.color,
-          bgOpacity: palette.opacity,
-        },
-        position: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
-      });
+      const div = document.createElement('div');
+      div.className = 'gen-bg-band';
+      div.style.background = palette.color;
+      div.style.opacity = String(palette.opacity);
+      layer.appendChild(div);
+      bands.push({ div, nodes, padding });
     });
 
-    cy.nodes('[?genBg]').moveToBack();
-    cy.edges().moveToFront();
-    updateGenLegend(levels);
-  }
+    const syncBands = () => {
+      bands.forEach(({ div, nodes, padding: pad }) => {
+        if (!nodes.length) return;
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        nodes.forEach(n => {
+          const p = n.renderedPosition();
+          const w = n.renderedOuterWidth();
+          const h = n.renderedOuterHeight();
+          minX = Math.min(minX, p.x - w / 2);
+          maxX = Math.max(maxX, p.x + w / 2);
+          minY = Math.min(minY, p.y - h / 2);
+          maxY = Math.max(maxY, p.y + h / 2);
+        });
+        div.style.left = `${minX - pad}px`;
+        div.style.top = `${minY - pad}px`;
+        div.style.width = `${maxX - minX + pad * 2}px`;
+        div.style.height = `${maxY - minY + pad * 2}px`;
+      });
+    };
 
-  function clearGenerationUi() {
-    const legend = document.getElementById('gen-legend');
-    if (legend) legend.remove();
+    genBgSyncHandler = syncBands;
+    cy.on('pan zoom resize render', syncBands);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(syncBands);
+    });
+    updateGenLegend(levels);
   }
 
   function buildChildMap(edges) {
@@ -1511,6 +1536,7 @@
         </div>
         <div class="main-row">
           <div class="workspace">
+            <div id="gen-bg-layer"></div>
             <div id="cy"></div>
           </div>
           <div class="sidebar scroll-subtle mobile-sheet" id="mobile-sheet">
@@ -1557,6 +1583,8 @@
     const selectedId = STATE.selectedId;
 
     if (STATE.cy) {
+      removeGenerationBackgrounds(STATE.cy);
+      clearGenerationUi();
       STATE.cy.destroy();
       STATE.cy = null;
     }
@@ -1573,18 +1601,10 @@
       maxZoom: 4,
       wheelSensitivity: 0.28,
       style: [
-        { selector: 'node[?genBg]', style: {
-          width: 'data(bgW)', height: 'data(bgH)',
-          'background-color': 'data(bgColor)',
-          'background-opacity': 'data(bgOpacity)',
-          'border-width': 0, shape: 'round-rectangle', 'corner-radius': 16,
-          label: '', events: 'no', 'z-index': 0,
-        }},
         { selector: 'node', style: {
           'background-color': '#3d8f5a', 'label': '', 'color': '#e8edf5',
           'width': 95, 'height': 95,
           'border-width': 2, 'border-color': '#6bcf8e',
-          'z-index': 1,
         }},
         { selector: 'node[kind = "couple"]', style: {
           'background-color': '#2d5a6a', 'border-color': '#5ab4d4', 'width': 110, 'height': 100,
@@ -1595,7 +1615,6 @@
         { selector: 'edge', style: {
           'width': 2, 'line-color': '#445566', 'target-arrow-color': '#445566',
           'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
-          'z-index': 2,
         }},
       ],
     });
@@ -1620,6 +1639,9 @@
           if (sel.nonempty()) sel.select();
         }
         setupHtmlLabels(STATE.cy);
+        if (STATE.viewMode === 'mixed' && genBgSyncHandler) {
+          requestAnimationFrame(() => genBgSyncHandler());
+        }
       };
       if (STATE.viewMode === 'mixed') {
         applyMixedViewLayout(STATE.cy).then(finish);
@@ -1639,7 +1661,6 @@
     });
 
     STATE.cy.on('tap', 'node', evt => {
-      if (evt.target.data('genBg')) return;
       const id = evt.target.id();
       STATE.selectedId = id;
       renderEditPanel(id);
