@@ -38,7 +38,10 @@
     dirty: false,
     cy: null,
     selectedId: null,
+    viewMode: sessionStorage.getItem('ukrop_view') || 'tree',
   };
+
+  const MIXED_WIDE_MIN = 2;
 
   const LABEL_KEYS = ['NodeLabel', 'NodeLabels', 'label', 'name', 'Имя', 'ФИО'];
   const BDAY_KEYS = ['birthday', 'Birthday', 'birthdate', 'День рождения', 'dob'];
@@ -892,6 +895,20 @@
       .btn-ghost-sm { background: transparent; border: 1px solid #445; color: #9ab; padding: 0.4rem 0.7rem; font-size: 0.78rem; margin-top: 4px; width: 100%; }
       .hint { font-size: 0.78rem; color: #667; line-height: 1.4; }
       .status { font-size: 0.8rem; color: #6bcf8e; }
+      .view-menu { position: relative; flex-shrink: 0; }
+      .view-menu > summary.btn { list-style: none; width: auto; white-space: nowrap; }
+      .view-menu > summary.btn::-webkit-details-marker { display: none; }
+      .view-menu-panel {
+        position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;
+        min-width: 240px; background: #1a222d; border: 1px solid #2a3848;
+        border-radius: 10px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .view-menu-panel .btn { width: 100%; text-align: left; font-weight: 500; }
+      .view-option.active { background: #3d8f5a; color: #fff; }
+      .view-hint {
+        font-size: 0.72rem; color: #8899aa; line-height: 1.35; padding: 4px 6px 2px;
+      }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
       .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; }
@@ -1159,12 +1176,211 @@
     });
   }
 
+  function buildChildMap(edges) {
+    const map = new Map();
+    edges.forEach(e => {
+      if (!map.has(e.source)) map.set(e.source, []);
+      map.get(e.source).push(e.target);
+    });
+    return map;
+  }
+
+  function getGraphRoots(edges, nodeIds) {
+    const targets = new Set(edges.map(e => e.target));
+    return nodeIds.filter(id => !targets.has(id));
+  }
+
+  function singleChildSpineLength(nodeId, children) {
+    let len = 1;
+    let cur = nodeId;
+    while (true) {
+      const kids = children.get(cur) || [];
+      if (kids.length !== 1) break;
+      cur = kids[0];
+      len++;
+    }
+    return len;
+  }
+
+  function collectDescendantIds(rootId, children) {
+    const ids = new Set();
+    (function walk(id) {
+      ids.add(id);
+      (children.get(id) || []).forEach(walk);
+    })(rootId);
+    return ids;
+  }
+
+  function findHorizontalPivots(edges, nodeIds, minLen) {
+    const children = buildChildMap(edges);
+    const pivots = [];
+    const inZone = new Set();
+
+    function dfs(nodeId) {
+      for (const kid of children.get(nodeId) || []) {
+        if (inZone.has(kid)) continue;
+        if (singleChildSpineLength(kid, children) >= minLen) {
+          pivots.push(kid);
+          collectDescendantIds(kid, children).forEach(id => inZone.add(id));
+        } else {
+          dfs(kid);
+        }
+      }
+    }
+
+    getGraphRoots(edges, nodeIds).forEach(dfs);
+    return pivots;
+  }
+
+  function layoutSubtreeHorizontal(cy, pivotId, subtreeIds, anchorPos) {
+    const idSet = subtreeIds;
+    let collection = cy.collection();
+    idSet.forEach(id => {
+      const n = cy.getElementById(id);
+      if (n.nonempty()) collection = collection.union(n);
+    });
+    cy.edges().forEach(e => {
+      if (idSet.has(e.source().id()) && idSet.has(e.target().id())) {
+        collection = collection.union(e);
+      }
+    });
+
+    return new Promise(resolve => {
+      const layout = collection.layout({
+        name: 'dagre',
+        rankDir: 'LR',
+        ranker: 'network-simplex',
+        nodeSep: 55,
+        rankSep: 100,
+        edgeSep: 20,
+        animate: false,
+        fit: false,
+      });
+      layout.one('layoutstop', () => {
+        const pivot = cy.getElementById(pivotId);
+        if (pivot.nonempty()) {
+          const dx = anchorPos.x - pivot.position('x');
+          const dy = anchorPos.y - pivot.position('y');
+          collection.nodes().forEach(n => {
+            const p = n.position();
+            n.position({ x: p.x + dx, y: p.y + dy });
+          });
+        }
+        resolve();
+      });
+      layout.run();
+    });
+  }
+
+  function shiftSubtreeBy(cy, rootId, dx, dy, children) {
+    if (!dx && !dy) return;
+    collectDescendantIds(rootId, children).forEach(id => {
+      const n = cy.getElementById(id);
+      if (n.nonempty()) {
+        const p = n.position();
+        n.position({ x: p.x + dx, y: p.y + dy });
+      }
+    });
+  }
+
+  async function applyMixedViewLayout(cy) {
+    const children = buildChildMap(STATE.edges);
+    const gap = 18;
+
+    const wideParents = [...children.entries()]
+      .filter(([, kids]) => kids.length >= MIXED_WIDE_MIN)
+      .map(([id, kids]) => {
+        const node = cy.getElementById(id);
+        return {
+          id,
+          kids,
+          y: node.nonempty() ? node.position('y') : 0,
+        };
+      })
+      .sort((a, b) => b.y - a.y);
+
+    for (const { kids: kidIds } of wideParents) {
+      const branchRoots = kidIds
+        .map(id => cy.getElementById(id))
+        .filter(e => e.nonempty())
+        .sort((a, b) => a.position('x') - b.position('x'));
+      if (branchRoots.length < 2) continue;
+
+      let x = branchRoots[0].position('x') - branchRoots[0].outerWidth() / 2;
+      branchRoots.forEach(node => {
+        const subtreeIds = collectDescendantIds(node.id(), children);
+        let minX = Infinity;
+        let maxX = -Infinity;
+        subtreeIds.forEach(id => {
+          const n = cy.getElementById(id);
+          if (n.nonempty()) {
+            const left = n.position('x') - n.outerWidth() / 2;
+            const right = n.position('x') + n.outerWidth() / 2;
+            minX = Math.min(minX, left);
+            maxX = Math.max(maxX, right);
+          }
+        });
+        if (!Number.isFinite(minX)) return;
+        const subtreeWidth = maxX - minX;
+        const dx = x - minX;
+        shiftSubtreeBy(cy, node.id(), dx, 0, children);
+        x += subtreeWidth + gap;
+      });
+    }
+
+    const pivots = findHorizontalPivots(
+      STATE.edges,
+      STATE.nodes.map(n => n.id),
+      3,
+    );
+    for (const pivotId of pivots) {
+      const subtreeIds = collectDescendantIds(pivotId, children);
+      const pivot = cy.getElementById(pivotId);
+      if (pivot.empty()) continue;
+      const anchorPos = { x: pivot.position('x'), y: pivot.position('y') };
+      await layoutSubtreeHorizontal(cy, pivotId, subtreeIds, anchorPos);
+    }
+  }
+
+  function setViewMode(mode) {
+    if (mode !== 'tree' && mode !== 'mixed') return;
+    STATE.viewMode = mode;
+    sessionStorage.setItem('ukrop_view', mode);
+    updateViewMenuUi();
+    renderGraph();
+  }
+
+  function updateViewMenuUi() {
+    document.querySelectorAll('.view-option').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === STATE.viewMode);
+    });
+  }
+
+  function wireViewMenu() {
+    document.querySelectorAll('.view-option').forEach(btn => {
+      btn.onclick = () => {
+        const menu = document.querySelector('.view-menu');
+        if (menu) menu.open = false;
+        setViewMode(btn.dataset.view);
+      };
+    });
+    updateViewMenuUi();
+  }
+
   function renderMain() {
     document.getElementById('app').innerHTML = `
       <div class="main-layout">
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
+          <details class="view-menu">
+            <summary class="btn btn-secondary">ВИД</summary>
+            <div class="view-menu-panel">
+              <button type="button" class="btn btn-secondary view-option" data-view="tree">Дерево</button>
+              <button type="button" class="btn btn-secondary view-option" data-view="mixed">ВИД2 — смешанный</button>
+              <div class="view-hint">ВИД2: ветки братьев и сестёр идут рядом вбок, остальное — вниз.</div>
+            </div>
+          </details>
           <button type="button" class="btn btn-secondary" id="btn-export-png">PNG — с днями рождения</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
@@ -1192,6 +1408,7 @@
       </div>`;
 
     document.getElementById('btn-export-png').onclick = () => downloadTreePng();
+    wireViewMenu();
     document.getElementById('btn-logout').onclick = () => {
       sessionStorage.removeItem('ukrop_code');
       STATE.code = '';
@@ -1255,13 +1472,20 @@
     });
 
     layout.one('layoutstop', () => {
-      STATE.cy.resize();
-      STATE.cy.fit(null, 60);
-      if (selectedId) {
-        const sel = STATE.cy.getElementById(selectedId);
-        if (sel.nonempty()) sel.select();
+      const finish = () => {
+        STATE.cy.resize();
+        STATE.cy.fit(null, 60);
+        if (selectedId) {
+          const sel = STATE.cy.getElementById(selectedId);
+          if (sel.nonempty()) sel.select();
+        }
+        setupHtmlLabels(STATE.cy);
+      };
+      if (STATE.viewMode === 'mixed') {
+        applyMixedViewLayout(STATE.cy).then(finish);
+      } else {
+        finish();
       }
-      setupHtmlLabels(STATE.cy);
     });
     layout.run();
 
