@@ -1054,12 +1054,118 @@
     });
   }
 
+  function exportFileStamp() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function hideHtmlOverlays(cyRoot) {
+    const overlays = cyRoot
+      ? [...cyRoot.children].filter(el => !el.classList.contains('cy-canvas'))
+      : [];
+    overlays.forEach(el => {
+      el.dataset.exportHidden = el.style.display;
+      el.style.display = 'none';
+    });
+    return overlays;
+  }
+
+  function showHtmlOverlays(overlays) {
+    overlays.forEach(el => {
+      el.style.display = el.dataset.exportHidden || '';
+      delete el.dataset.exportHidden;
+    });
+  }
+
+  function applyPngExportLabels(cy) {
+    cy.nodes().forEach(node => {
+      const d = node.data();
+      const bday = (d.bdayLine || '').trim();
+      node.data('exportLabel', bday ? `${d.nameLine}\n${bday}` : d.nameLine);
+    });
+    cy.style()
+      .selector('node')
+      .style({
+        label: 'data(exportLabel)',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        color: '#e8edf5',
+        'font-size': '15px',
+        'font-weight': '400',
+        'text-wrap': 'wrap',
+        'text-max-width': '112px',
+        'text-outline-color': '#121820',
+        'text-outline-width': 2,
+      })
+      .update();
+  }
+
+  function clearPngExportLabels(cy) {
+    cy.nodes().removeData('exportLabel');
+    disableCanvasExportLabels(cy);
+  }
+
+  function disableCanvasExportLabels(cy) {
+    cy.style()
+      .selector('node')
+      .style({ label: '', 'text-outline-width': 0 })
+      .update();
+  }
+
+  async function withExportUi(label, fn) {
+    const status = document.getElementById('save-status');
+    if (status) status.textContent = label;
+    try {
+      await fn();
+    } finally {
+      setTimeout(() => {
+        if (status && status.textContent === label) status.textContent = '';
+      }, 3000);
+    }
+  }
+
+  async function downloadTreePng() {
+    const cy = STATE.cy;
+    if (!cy || cy.nodes().length === 0) {
+      alert('Дерево ещё не загружено');
+      return;
+    }
+
+    await withExportUi('Создание PNG…', async () => {
+      const status = document.getElementById('save-status');
+      const selected = cy.$(':selected');
+      selected.unselect();
+      const cyRoot = document.getElementById('cy');
+      const overlays = hideHtmlOverlays(cyRoot);
+      applyPngExportLabels(cy);
+
+      try {
+        const blob = await cy.png({ output: 'blob-promise', bg: '#121820', full: true, scale: 4 });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Ukrop-derevo-${exportFileStamp()}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+        if (status) status.textContent = 'PNG сохранён на компьютер';
+      } catch (e) {
+        console.error(e);
+        if (status) status.textContent = '';
+        alert(e.message || 'Не удалось создать PNG');
+      } finally {
+        clearPngExportLabels(cy);
+        showHtmlOverlays(overlays);
+        if (selected.nonempty()) selected.select();
+      }
+    });
+  }
+
   function renderMain() {
     document.getElementById('app').innerHTML = `
       <div class="main-layout">
         <div class="topbar">
           <h1>🌿 Укроп — родословное дерево</h1>
           <span class="status" id="save-status"></span>
+          <button type="button" class="btn btn-secondary" id="btn-export-png">PNG — с днями рождения</button>
           <button class="btn btn-secondary" id="btn-logout">Выйти</button>
         </div>
         <div class="main-row">
@@ -1085,6 +1191,7 @@
         </div>
       </div>`;
 
+    document.getElementById('btn-export-png').onclick = () => downloadTreePng();
     document.getElementById('btn-logout').onclick = () => {
       sessionStorage.removeItem('ukrop_code');
       STATE.code = '';
