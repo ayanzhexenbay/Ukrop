@@ -236,14 +236,14 @@
       return {
         type: 'couple',
         people: [
-          { id: genPersonId(), name: pair[0], gender: '', birthday: '' },
-          { id: genPersonId(), name: pair[1], gender: '', birthday: '' },
+          { id: genPersonId(), name: pair[0], gender: '', birthday: '', dod: '' },
+          { id: genPersonId(), name: pair[1], gender: '', birthday: '', dod: '' },
         ],
       };
     }
     return {
       type: 'person',
-      people: [{ id: genPersonId(), name: cleanPersonLabel(label), gender: '', birthday: birthday || '' }],
+      people: [{ id: genPersonId(), name: cleanPersonLabel(label), gender: '', birthday: birthday || '', dod: '' }],
     };
   }
 
@@ -281,19 +281,27 @@
     return people[0]?.name || '?';
   }
 
+  function personLifeSpan(p) {
+    if (!p) return '';
+    const b = p.birthday ? formatBday(p.birthday) : '';
+    const d = p.dod ? formatBday(p.dod) : '';
+    if (b && d) return `${b}–${d}`;
+    if (b) return b;
+    if (d) return `†${d}`;
+    return '';
+  }
+
   function ukropNodeSublabel(ukrop) {
     if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
-      const a = ukrop.people[0];
-      const b = ukrop.people[1];
-      const da = a.birthday ? formatBday(a.birthday) : '';
-      const db = b.birthday ? formatBday(b.birthday) : '';
+      const da = personLifeSpan(ukrop.people[0]);
+      const db = personLifeSpan(ukrop.people[1]);
       if (da && db) return `\n[${da} - ${db}]`;
       if (da) return `\n[${da}]`;
       if (db) return `\n[${db}]`;
       return '';
     }
-    const bday = ukrop.people[0]?.birthday;
-    return bday ? `\n[${formatBday(bday)}]` : '';
+    const span = personLifeSpan(ukrop.people[0]);
+    return span ? `\n[${span}]` : '';
   }
 
   function writeUkropToNode(nodeEl, ukrop, keyMap) {
@@ -626,6 +634,8 @@
       p1.name = document.getElementById('p1-name').value.trim();
       p0.birthday = document.getElementById('p0-bday').value;
       p1.birthday = document.getElementById('p1-bday').value;
+      p0.dod = document.getElementById('p0-dod')?.value || '';
+      p1.dod = document.getElementById('p1-dod')?.value || '';
       p0.gender = readGender('p0-gender');
       p1.gender = readGender('p1-gender');
       if (!p0.name || !p1.name) return { ok: false, error: 'Введите оба имени' };
@@ -638,11 +648,15 @@
     if (editName) {
       const name = editName.value.trim();
       const bday = document.getElementById('edit-bday')?.value || '';
+      const dod = document.getElementById('edit-dod')?.value || '';
       const gender = readGender('gender');
       if (!name) return { ok: false, error: 'Введите имя' };
       if (!gender) return { ok: false, error: 'Укажите пол' };
       ukrop.type = 'person';
-      ukrop.people = [{ ...(ukrop.people[0] || { id: genPersonId() }), name, gender, birthday: bday }];
+      ukrop.people = [{
+        ...(ukrop.people[0] || { id: genPersonId() }),
+        name, gender, birthday: bday, dod,
+      }];
       updateNodeUkrop(nodeId, ukrop);
       return { ok: true };
     }
@@ -1743,6 +1757,8 @@
             ${genderRadioGroup('p0-gender', p0.gender)}
             <label>День рождения</label>
             <input type="date" id="p0-bday" value="${p0.birthday || ''}">
+            <label>Дата смерти</label>
+            <input type="date" id="p0-dod" value="${p0.dod || ''}">
           </div>
           <div class="edit-section">
             <h4>Человек 2</h4>
@@ -1752,6 +1768,8 @@
             ${genderRadioGroup('p1-gender', p1.gender)}
             <label>День рождения</label>
             <input type="date" id="p1-bday" value="${p1.birthday || ''}">
+            <label>Дата смерти</label>
+            <input type="date" id="p1-dod" value="${p1.dod || ''}">
           </div>
           <button class="btn btn-ghost-sm" id="btn-to-person">Сделать одним человеком</button>
           <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
@@ -1761,7 +1779,11 @@
         const gender = readGender('p0-gender');
         if (!gender) { alert('Укажите пол'); return; }
         ukrop.type = 'person';
-        ukrop.people = [{ id: p0.id, name, gender, birthday: document.getElementById('p0-bday').value }];
+        ukrop.people = [{
+          id: p0.id, name, gender,
+          birthday: document.getElementById('p0-bday').value,
+          dod: document.getElementById('p0-dod')?.value || '',
+        }];
         updateNodeUkrop(id, ukrop);
         renderEditPanel(id);
         saveNodeChangesToDrive(id, '✓ Применено и сохранено на Drive');
@@ -1774,7 +1796,7 @@
       return;
     }
 
-    const p = ukrop.people[0] || { id: genPersonId(), name: '', gender: '', birthday: '' };
+    const p = ukrop.people[0] || { id: genPersonId(), name: '', gender: '', birthday: '', dod: '' };
     panel.innerHTML = `
       <h3>Человек</h3>
       <div class="edit-form">
@@ -1784,19 +1806,23 @@
         ${genderRadioGroup('gender', p.gender)}
         <label>День рождения</label>
         <input type="date" id="edit-bday" value="${p.birthday || ''}">
+        <label>Дата смерти</label>
+        <input type="date" id="edit-dod" value="${p.dod || ''}">
         <button class="btn btn-ghost-sm" id="btn-to-couple">Сделать парой (2 человека)</button>
         <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
       </div>`;
     document.getElementById('btn-to-couple').onclick = () => {
       const name = document.getElementById('edit-name').value.trim() || p.name;
       const parts = splitCoupleName(name);
+      const bday = document.getElementById('edit-bday').value;
+      const dod = document.getElementById('edit-dod')?.value || '';
       ukrop.type = 'couple';
       ukrop.people = parts ? [
-        { id: genPersonId(), name: parts[0], gender: '', birthday: '' },
-        { id: genPersonId(), name: parts[1], gender: '', birthday: document.getElementById('edit-bday').value },
+        { id: genPersonId(), name: parts[0], gender: '', birthday: '', dod: '' },
+        { id: genPersonId(), name: parts[1], gender: '', birthday: bday, dod },
       ] : [
-        { id: p.id, name, gender: readGender('gender'), birthday: document.getElementById('edit-bday').value },
-        { id: genPersonId(), name: 'Имя', gender: '', birthday: '' },
+        { id: p.id, name, gender: readGender('gender'), birthday: bday, dod },
+        { id: genPersonId(), name: 'Имя', gender: '', birthday: '', dod: '' },
       ];
       updateNodeUkrop(id, ukrop);
       renderEditPanel(id);
