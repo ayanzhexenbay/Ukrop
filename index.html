@@ -294,8 +294,10 @@
   function ukropNodeSublabelLines(ukrop) {
     if (!ukrop?.people?.length) return [];
     if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
-      return [personLifeSpan(ukrop.people[0]), personLifeSpan(ukrop.people[1])]
-        .filter(Boolean);
+      return [
+        personLifeSpan(ukrop.people[0]) || '-',
+        personLifeSpan(ukrop.people[1]) || '-',
+      ];
     }
     const span = personLifeSpan(ukrop.people[0]);
     return span ? [span] : [];
