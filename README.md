@@ -86,6 +86,51 @@ window.UKROP_CONFIG = {
 - Без кода доступа дерево не загружается
 - Код проверяется на сервере (Apps Script), не только в браузере
 - Рекомендуется: файл на Drive доступен только вам
+- Токен Whapi храните только в **Script properties**, не в Git
+
+---
+
+## WhatsApp: дни рождения (как Whapi_Whatsapp.exe)
+
+Один GET делает оба режима:
+
+1. **1-е число месяца** → месячный список → группа + 2 контакта  
+2. **Каждый день** → кто сегодня именинник → 2 контакта  
+
+### Настройка
+
+1. В Apps Script добавьте файл [`BirthdayNotify.gs`](apps-script/BirthdayNotify.gs) рядом с `Code.gs`
+2. **Project Settings → Script properties:**
+   - `WHAPI_TOKEN` = токен из Whapi (как в `Whapi_Whatsapp`)
+   - опционально: `WHATSAPP_GROUP`, `WHATSAPP_CONTACTS` (через запятую)
+3. **Развернуть заново** веб-приложение (New version)
+4. Один раз в редакторе запустите функцию `setupBirthdayNotifyTrigger`  
+   (ежедневно ~08:00)
+
+### Вызов вручную / cron
+
+Превью без отправки:
+
+```
+GET {APPS_SCRIPT_URL}?action=birthday_notify&code=alasha&preview=1
+```
+
+Реальная отправка (как cron):
+
+```
+GET {APPS_SCRIPT_URL}?action=birthday_notify&code=alasha
+```
+
+Тест на дату:
+
+```
+…&preview=1&date=25.08.2026
+…&force_monthly=1&preview=1
+```
+
+По умолчанию:
+- группа `120363267961302181@g.us`
+- контакты `77778090088`, `77771835265`
 
 ---
 
@@ -96,7 +141,8 @@ Ukrop/
 ├── index.html           # Сайт
 ├── config.js            # URL Apps Script
 ├── apps-script/
-│   └── Code.gs          # Серверная часть (копировать в Google)
+│   ├── Code.gs          # API load/save + birthday_notify
+│   └── BirthdayNotify.gs # Текст ДР + Whapi
 └── README.md
 ```
 
