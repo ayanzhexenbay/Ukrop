@@ -634,8 +634,8 @@
       p1.name = document.getElementById('p1-name').value.trim();
       p0.birthday = document.getElementById('p0-bday').value;
       p1.birthday = document.getElementById('p1-bday').value;
-      p0.dod = document.getElementById('p0-dod')?.value || '';
-      p1.dod = document.getElementById('p1-dod')?.value || '';
+      p0.dod = readDodFromPanel('p0');
+      p1.dod = readDodFromPanel('p1');
       p0.gender = readGender('p0-gender');
       p1.gender = readGender('p1-gender');
       if (!p0.name || !p1.name) return { ok: false, error: 'Введите оба имени' };
@@ -648,7 +648,7 @@
     if (editName) {
       const name = editName.value.trim();
       const bday = document.getElementById('edit-bday')?.value || '';
-      const dod = document.getElementById('edit-dod')?.value || '';
+      const dod = readDodFromPanel('edit');
       const gender = readGender('gender');
       if (!name) return { ok: false, error: 'Введите имя' };
       if (!gender) return { ok: false, error: 'Укажите пол' };
@@ -667,7 +667,7 @@
   function wireEditPanelAutoApply(nodeId) {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
-    panel.querySelectorAll('input[type="date"]').forEach(inp => {
+    panel.querySelectorAll('input[type="date"], input[type="checkbox"][id$="-alive"]').forEach(inp => {
       inp.addEventListener('change', () => {
         applyEditPanel(nodeId);
       });
@@ -947,6 +947,18 @@
       .edit-section h4 { font-size: 0.82rem; color: #6bcf8e; margin-bottom: 6px; }
       .gender-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; font-size: 0.85rem; }
       .gender-row label { display: flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+      .bday-alive-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        margin-bottom: 0.4rem;
+      }
+      .bday-alive-row > span { color: #8ab4cc; font-size: 0.85rem; }
+      .alive-check {
+        display: inline-flex; align-items: center; gap: 4px; margin: 0;
+        font-size: 0.78rem; color: #9ab; cursor: pointer; white-space: nowrap;
+      }
+      .alive-check input { width: auto; margin: 0; accent-color: #3d8f5a; }
+      .dod-block { margin-bottom: 8px; }
+      .dod-block[hidden] { display: none !important; }
       .btn-ghost-sm { background: transparent; border: 1px solid #445; color: #9ab; padding: 0.4rem 0.7rem; font-size: 0.78rem; margin-top: 4px; width: 100%; }
       .hint { font-size: 0.78rem; color: #667; line-height: 1.4; }
       .status { font-size: 0.8rem; color: #6bcf8e; }
@@ -1728,6 +1740,49 @@
     });
   }
 
+  function birthdayAliveFields(prefix, person) {
+    const alive = !person?.dod;
+    const aliveId = `${prefix}-alive`;
+    const bdayId = `${prefix}-bday`;
+    const dodId = `${prefix}-dod`;
+    return `
+      <div class="bday-alive-row">
+        <span>День рождения</span>
+        <label class="alive-check"><input type="checkbox" id="${aliveId}" ${alive ? 'checked' : ''}> жив</label>
+      </div>
+      <input type="date" id="${bdayId}" value="${person?.birthday || ''}">
+      <div class="dod-block" id="${prefix}-dod-wrap" ${alive ? 'hidden' : ''}>
+        <label>Дата смерти</label>
+        <input type="date" id="${dodId}" value="${person?.dod || ''}">
+      </div>`;
+  }
+
+  function readDodFromPanel(prefix) {
+    const alive = document.getElementById(`${prefix}-alive`);
+    if (alive?.checked) return '';
+    return document.getElementById(`${prefix}-dod`)?.value || '';
+  }
+
+  function wireAliveToggles(panel) {
+    if (!panel) return;
+    panel.querySelectorAll('input[type="checkbox"][id$="-alive"]').forEach(cb => {
+      const prefix = cb.id.replace(/-alive$/, '');
+      const wrap = document.getElementById(`${prefix}-dod-wrap`);
+      const dod = document.getElementById(`${prefix}-dod`);
+      const sync = () => {
+        if (!wrap) return;
+        if (cb.checked) {
+          wrap.hidden = true;
+          if (dod) dod.value = '';
+        } else {
+          wrap.hidden = false;
+        }
+      };
+      cb.addEventListener('change', sync);
+      sync();
+    });
+  }
+
   function renderEditPanel(id) {
     const panel = document.getElementById('edit-panel');
     if (!panel) return;
@@ -1755,10 +1810,7 @@
             <input type="text" id="p0-name" value="${esc(p0.name)}">
             <label>Пол</label>
             ${genderRadioGroup('p0-gender', p0.gender)}
-            <label>День рождения</label>
-            <input type="date" id="p0-bday" value="${p0.birthday || ''}">
-            <label>Дата смерти</label>
-            <input type="date" id="p0-dod" value="${p0.dod || ''}">
+            ${birthdayAliveFields('p0', p0)}
           </div>
           <div class="edit-section">
             <h4>Человек 2</h4>
@@ -1766,10 +1818,7 @@
             <input type="text" id="p1-name" value="${esc(p1.name)}">
             <label>Пол</label>
             ${genderRadioGroup('p1-gender', p1.gender)}
-            <label>День рождения</label>
-            <input type="date" id="p1-bday" value="${p1.birthday || ''}">
-            <label>Дата смерти</label>
-            <input type="date" id="p1-dod" value="${p1.dod || ''}">
+            ${birthdayAliveFields('p1', p1)}
           </div>
           <button class="btn btn-ghost-sm" id="btn-to-person">Сделать одним человеком</button>
           <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
@@ -1782,7 +1831,7 @@
         ukrop.people = [{
           id: p0.id, name, gender,
           birthday: document.getElementById('p0-bday').value,
-          dod: document.getElementById('p0-dod')?.value || '',
+          dod: readDodFromPanel('p0'),
         }];
         updateNodeUkrop(id, ukrop);
         renderEditPanel(id);
@@ -1791,6 +1840,7 @@
       document.getElementById('edit-apply').onclick = () => {
         applyAndSaveToDrive(id);
       };
+      wireAliveToggles(panel);
       wireEditPanelAutoApply(id);
       scheduleCyResize();
       return;
@@ -1804,10 +1854,7 @@
         <input type="text" id="edit-name" value="${esc(p.name)}">
         <label>Пол</label>
         ${genderRadioGroup('gender', p.gender)}
-        <label>День рождения</label>
-        <input type="date" id="edit-bday" value="${p.birthday || ''}">
-        <label>Дата смерти</label>
-        <input type="date" id="edit-dod" value="${p.dod || ''}">
+        ${birthdayAliveFields('edit', p)}
         <button class="btn btn-ghost-sm" id="btn-to-couple">Сделать парой (2 человека)</button>
         <button class="btn btn-primary" id="edit-apply" style="margin-top:8px">Применить</button>
       </div>`;
@@ -1815,7 +1862,7 @@
       const name = document.getElementById('edit-name').value.trim() || p.name;
       const parts = splitCoupleName(name);
       const bday = document.getElementById('edit-bday').value;
-      const dod = document.getElementById('edit-dod')?.value || '';
+      const dod = readDodFromPanel('edit');
       ukrop.type = 'couple';
       ukrop.people = parts ? [
         { id: genPersonId(), name: parts[0], gender: '', birthday: '', dod: '' },
@@ -1831,6 +1878,7 @@
     document.getElementById('edit-apply').onclick = () => {
       applyAndSaveToDrive(id);
     };
+    wireAliveToggles(panel);
     wireEditPanelAutoApply(id);
     scheduleCyResize();
   }
