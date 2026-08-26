@@ -285,23 +285,26 @@
     if (!p) return '';
     const b = p.birthday ? formatBday(p.birthday) : '';
     const d = p.dod ? formatBday(p.dod) : '';
-    if (b && d) return `${b}–${d}`;
+    if (b && d) return `${b} - ${d}`;
     if (b) return b;
     if (d) return `†${d}`;
     return '';
   }
 
-  function ukropNodeSublabel(ukrop) {
+  function ukropNodeSublabelLines(ukrop) {
+    if (!ukrop?.people?.length) return [];
     if (ukrop.type === 'couple' && ukrop.people.length >= 2) {
-      const da = personLifeSpan(ukrop.people[0]);
-      const db = personLifeSpan(ukrop.people[1]);
-      if (da && db) return `\n[${da} - ${db}]`;
-      if (da) return `\n[${da}]`;
-      if (db) return `\n[${db}]`;
-      return '';
+      return [personLifeSpan(ukrop.people[0]), personLifeSpan(ukrop.people[1])]
+        .filter(Boolean);
     }
     const span = personLifeSpan(ukrop.people[0]);
-    return span ? `\n[${span}]` : '';
+    return span ? [span] : [];
+  }
+
+  function ukropNodeSublabel(ukrop) {
+    const lines = ukropNodeSublabelLines(ukrop);
+    if (!lines.length) return '';
+    return '\n' + lines.map(s => `[${s}]`).join('\n');
   }
 
   function writeUkropToNode(nodeEl, ukrop, keyMap) {
@@ -582,10 +585,12 @@
   }
 
   function nodeCyData(n) {
+    const lines = ukropNodeSublabelLines(n.ukrop);
     return {
       id: n.id,
       nameLine: n.label,
-      bdayLine: ukropNodeSublabel(n.ukrop).trim(),
+      bdayLine: lines.map(s => `[${s}]`).join('\n'),
+      bdayLines: lines,
       kind: n.kind,
     };
   }
@@ -600,8 +605,10 @@
       valignBox: 'center',
       tpl(data) {
         if (data.genBg) return '';
-        const bday = data.bdayLine
-          ? `<div class="cy-bday">${escHtml(data.bdayLine)}</div>` : '';
+        const lines = Array.isArray(data.bdayLines) ? data.bdayLines.filter(Boolean) : [];
+        const bday = lines.length
+          ? `<div class="cy-bday">${lines.map(s => `<div class="cy-bday-line">[${escHtml(s)}]</div>`).join('')}</div>`
+          : '';
         const isCouple = data.kind === 'couple';
         const wrapCls = ['cy-node-text', bday && 'has-bday', isCouple && bday && 'couple'].filter(Boolean).join(' ');
         return `<div class="${wrapCls}"><div class="cy-name">${escHtml(data.nameLine)}</div>${bday}</div>`;
@@ -999,11 +1006,12 @@
       }
       a.back-link { color: #6a9fd8; text-decoration: none; font-size: 0.85rem; }
       a.back-link:hover { text-decoration: underline; }
-      .cy-node-text { text-align: center; pointer-events: none; max-width: 96px; line-height: 1.2; transform: translateY(0px); overflow: hidden; position: relative; z-index: 5; }
+      .cy-node-text { text-align: center; pointer-events: none; max-width: 104px; line-height: 1.2; transform: translateY(0px); overflow: hidden; position: relative; z-index: 5; }
       .cy-node-text.has-bday { transform: translateY(4px); }
-      .cy-node-text.couple.has-bday { transform: translateY(8px); }
+      .cy-node-text.couple.has-bday { transform: translateY(10px); }
       .cy-name { font-size: 12px; font-weight: 300; color: #eef2f8; }
-      .cy-bday { font-size: 9px; color: #7a8899; margin-top: 4px; font-weight: 400; }
+      .cy-bday { margin-top: 3px; font-weight: 400; }
+      .cy-bday-line { font-size: 8px; color: #7a8899; line-height: 1.25; white-space: nowrap; }
     `;
     document.head.appendChild(s);
   }
@@ -1194,10 +1202,10 @@
         'text-valign': 'center',
         'text-halign': 'center',
         color: '#e8edf5',
-        'font-size': '15px',
+        'font-size': '13px',
         'font-weight': '400',
         'text-wrap': 'wrap',
-        'text-max-width': '112px',
+        'text-max-width': '120px',
         'text-outline-color': '#121820',
         'text-outline-width': 2,
       })
