@@ -415,6 +415,125 @@
     throw lastErr;
   }
 
+  async function loadWhatsAppSettings() {
+    const url = apiUrl({ action: 'whatsapp_settings', code: STATE.code });
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Не удалось загрузить настройки WhatsApp');
+    return data.settings || { group: '', contacts: [] };
+  }
+
+  async function saveWhatsAppSettings(group, contacts) {
+    const base = window.UKROP_CONFIG.APPS_SCRIPT_URL;
+    const payload = JSON.stringify({
+      action: 'whatsapp_settings_save',
+      code: STATE.code,
+      group: group || '',
+      contacts: contacts || [],
+    });
+    const data = await postAppsScriptJson(base, payload);
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Ошибка сохранения настроек');
+    return data.settings || { group, contacts };
+  }
+
+  function readWaContactsFromDom() {
+    const list = document.getElementById('wa-contacts-list');
+    if (!list) return [];
+    return [...list.querySelectorAll('.wa-contact-row input')]
+      .map(inp => inp.value.replace(/\D/g, '').trim())
+      .filter(Boolean);
+  }
+
+  function renderWaContactRows(contacts) {
+    const list = document.getElementById('wa-contacts-list');
+    if (!list) return;
+    const rows = (contacts && contacts.length) ? contacts : [''];
+    list.innerHTML = rows.map((phone, i) => `
+      <div class="wa-contact-row">
+        <input type="tel" inputmode="numeric" class="wa-contact-input" value="${escHtml(phone)}" placeholder="77771234567" aria-label="Контакт ${i + 1}">
+        <button type="button" class="wa-remove" title="Убрать контакт" aria-label="Убрать контакт">×</button>
+      </div>`).join('');
+    list.querySelectorAll('.wa-remove').forEach(btn => {
+      btn.onclick = () => {
+        const row = btn.closest('.wa-contact-row');
+        if (!row) return;
+        const rowsLeft = list.querySelectorAll('.wa-contact-row').length;
+        if (rowsLeft <= 1) {
+          row.querySelector('input').value = '';
+          return;
+        }
+        row.remove();
+      };
+    });
+  }
+
+  function wireWhatsAppSettingsPanel() {
+    const addBtn = document.getElementById('wa-add-contact');
+    const saveBtn = document.getElementById('wa-save');
+    const status = document.getElementById('wa-settings-status');
+    if (!addBtn || !saveBtn) return;
+
+    addBtn.onclick = () => {
+      const list = document.getElementById('wa-contacts-list');
+      if (!list) return;
+      const current = readWaContactsFromDom();
+      renderWaContactRows(current.concat(['']));
+    };
+
+    saveBtn.onclick = async () => {
+      const groupInp = document.getElementById('wa-group');
+      const group = groupInp ? groupInp.value.trim() : '';
+      const contacts = readWaContactsFromDom();
+      saveBtn.disabled = true;
+      if (status) {
+        status.textContent = 'Сохранение…';
+        status.className = 'wa-settings-status saving';
+      }
+      try {
+        const saved = await saveWhatsAppSettings(group, contacts);
+        if (groupInp) groupInp.value = saved.group || '';
+        renderWaContactRows(saved.contacts || []);
+        if (status) {
+          status.textContent = 'Сохранено';
+          status.className = 'wa-settings-status ok';
+        }
+      } catch (e) {
+        if (status) {
+          status.textContent = e.message || 'Ошибка';
+          status.className = 'wa-settings-status err';
+        }
+      } finally {
+        saveBtn.disabled = false;
+        setTimeout(() => {
+          if (status && (status.classList.contains('ok') || status.classList.contains('err'))) {
+            status.textContent = '';
+            status.className = 'wa-settings-status';
+          }
+        }, 3000);
+      }
+    };
+  }
+
+  async function initWhatsAppSettingsPanel() {
+    const groupInp = document.getElementById('wa-group');
+    const status = document.getElementById('wa-settings-status');
+    if (!groupInp) return;
+    if (status) status.textContent = 'Загрузка…';
+    try {
+      const settings = await loadWhatsAppSettings();
+      groupInp.value = settings.group || '';
+      renderWaContactRows(settings.contacts || []);
+      if (status) status.textContent = '';
+    } catch (e) {
+      renderWaContactRows(['']);
+      if (status) {
+        status.textContent = e.message || 'Не удалось загрузить';
+        status.className = 'wa-settings-status err';
+      }
+    }
+    wireWhatsAppSettingsPanel();
+  }
+
   // ─── GraphML ───
   function parseGraphML(xml) {
     const doc = new DOMParser().parseFromString(xml, 'text/xml');
@@ -970,6 +1089,25 @@
       .dod-block[hidden] { display: none !important; }
       .btn-ghost-sm { background: transparent; border: 1px solid #445; color: #9ab; padding: 0.4rem 0.7rem; font-size: 0.78rem; margin-top: 4px; width: 100%; }
       .hint { font-size: 0.78rem; color: #667; line-height: 1.4; }
+      .panel-settings { flex: 0 0 auto; }
+      .wa-label { display: block; font-size: 0.78rem; color: #8ab4cc; margin-bottom: 4px; }
+      .wa-contacts-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        margin: 10px 0 6px; font-size: 0.78rem; color: #8ab4cc;
+      }
+      .wa-add-contact { width: auto; margin: 0; padding: 0.25rem 0.55rem; white-space: nowrap; }
+      .wa-contact-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      .wa-contact-row input { flex: 1; min-width: 0; margin-bottom: 0; }
+      .wa-remove {
+        flex-shrink: 0; width: 30px; height: 30px; padding: 0; border-radius: 6px;
+        border: 1px solid #445; background: #1a222d; color: #c88; font-size: 1.1rem; line-height: 1; cursor: pointer;
+      }
+      .wa-remove:hover { background: #2a1a1a; border-color: #a55; color: #f99; }
+      .wa-settings-status { font-size: 0.75rem; margin-top: 6px; min-height: 1em; }
+      .wa-settings-status.ok { color: #6bcf8e; }
+      .wa-settings-status.err { color: #f88; }
+      .wa-settings-status.saving { color: #9ab; }
+      .wa-settings-note { margin-top: 8px; margin-bottom: 0; }
       .status { font-size: 0.8rem; color: #6bcf8e; }
       .view-menu { position: relative; flex-shrink: 0; }
       .view-menu > summary.btn { list-style: none; width: auto; white-space: nowrap; }
@@ -1617,6 +1755,20 @@
                 <h3>🎂 Дни рождения</h3>
                 <div id="bday-list" class="scroll-subtle"></div>
               </div>
+              <div class="panel panel-settings" id="wa-settings-panel">
+                <h3>⚙️ WhatsApp</h3>
+                <p class="hint">Куда отправлять напоминания о днях рождения</p>
+                <label class="wa-label" for="wa-group">ID группы</label>
+                <input type="text" id="wa-group" placeholder="120363267961302181@g.us">
+                <div class="wa-contacts-head">
+                  <span>Контакты</span>
+                  <button type="button" class="btn btn-ghost-sm wa-add-contact" id="wa-add-contact">+ Добавить</button>
+                </div>
+                <div id="wa-contacts-list"></div>
+                <button type="button" class="btn btn-primary" id="wa-save" style="margin-top:8px">Сохранить</button>
+                <p class="wa-settings-status" id="wa-settings-status"></p>
+                <p class="hint wa-settings-note">1-е число → группа и контакты. Каждый день → только контакты. Пустое поле = не отправлять.</p>
+              </div>
             </div>
           </div>
         </div>
@@ -1638,6 +1790,7 @@
     });
     renderBirthdays();
     renderEditPanel(null);
+    initWhatsAppSettingsPanel();
   }
 
   function renderGraph() {

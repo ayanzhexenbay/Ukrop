@@ -102,9 +102,9 @@ window.UKROP_CONFIG = {
 1. В Apps Script добавьте файл [`BirthdayNotify.gs`](apps-script/BirthdayNotify.gs) рядом с `Code.gs`
 2. **Project Settings → Script properties:**
    - `WHAPI_TOKEN` = токен из Whapi (как в `Whapi_Whatsapp`)
-   - опционально: `WHATSAPP_GROUP`, `WHATSAPP_CONTACTS` (через запятую)
-3. **Развернуть заново** веб-приложение (New version)
-4. Один раз в редакторе запустите функцию `setupBirthdayNotifyTrigger`  
+3. В приложении Укроп: боковая панель → **⚙️ WhatsApp** — ID группы и номера контактов (можно добавлять и убирать)
+4. **Развернуть заново** веб-приложение (New version)
+5. Один раз в редакторе запустите функцию `setupBirthdayNotifyTrigger`  
    (ежедневно ~08:00)
 
 ### Вызов вручную / cron

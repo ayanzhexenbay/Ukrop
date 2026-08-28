@@ -1,92 +1,217 @@
-/**
- * Google Apps Script — скопируйте оба файла в https://script.google.com
- *   - Code.gs
- *   - BirthdayNotify.gs
- *
- * 1. Создайте новый проект Apps Script (или откройте существующий Ukrop)
- * 2. Вставьте код из apps-script/
- * 3. Укажите FILE_ID и ACCESS_CODE ниже
- * 4. Project Settings → Script properties:
- *      WHAPI_TOKEN = <токен Whapi>
- * 5. Deploy → New deployment → Web app
- *    - Execute as: Me
- *    - Who has access: Anyone
- * 6. Скопируйте URL в Ukrop/config.js → APPS_SCRIPT_URL
- * 7. (опционально) Запустите setupBirthdayNotifyTrigger() один раз в редакторе
- */
-
-// ID файла Укроп.graphml на Google Drive (из URL: drive.google.com/file/d/FILE_ID/...)
-const FILE_ID = '1kiX68XcMpdnabDZiHBdv0ZwH4GKtwZzQ';
-
-// Код доступа для семьи
-const ACCESS_CODE = 'alasha';
-
-function checkCode(code) {
-  return code && String(code).trim() === ACCESS_CODE;
-}
-
-function doGet(e) {
-  const params = e && e.parameter ? e.parameter : {};
-  const code = params.code;
-
-  if (!checkCode(code)) {
-    return jsonResponse({ ok: false, error: 'Неверный код доступа' });
-  }
-
-  if (params.action === 'load') {
-    try {
-      const file = DriveApp.getFileById(FILE_ID);
-      const content = file.getBlob().getDataAsString('UTF-8');
-      return ContentService
-        .createTextOutput(content)
-        .setMimeType(ContentService.MimeType.TEXT);
-    } catch (err) {
-      return jsonResponse({ ok: false, error: 'Не удалось прочитать файл: ' + err.message });
-    }
-  }
-
-  // WhatsApp: месяц (1-е число) + ежедневно. Логика из Whapi_Whatsapp.
-  // GET ?action=birthday_notify&code=alasha
-  // optional: preview=1 | force_monthly=1 | date=25.08.2026
-  if (params.action === 'birthday_notify') {
-    try {
-      return jsonResponse(runBirthdayNotify_(params));
-    } catch (err) {
-      return jsonResponse({ ok: false, error: 'birthday_notify: ' + err.message });
-    }
-  }
-
-  return jsonResponse({ ok: true, message: 'Ukrop API работает' });
-}
-
-function doPost(e) {
-  let body;
-  try {
-    body = JSON.parse(e.postData.contents);
-  } catch (err) {
-    return jsonResponse({ ok: false, error: 'Неверный JSON' });
-  }
-
-  if (!checkCode(body.code)) {
-    return jsonResponse({ ok: false, error: 'Неверный код доступа' });
-  }
-
-  if (body.action === 'save' && body.content) {
-    try {
-      const file = DriveApp.getFileById(FILE_ID);
-      file.setContent(body.content);
-      return jsonResponse({ ok: true, action: 'save', message: 'Сохранено на Google Drive' });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: 'Ошибка сохранения: ' + err.message });
-    }
-  }
-
-  return jsonResponse({ ok: false, error: 'Неизвестное действие' });
-}
-
-function jsonResponse(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
+/**
+
+ * Google Apps Script — скопируйте оба файла в https://script.google.com
+
+ *   - Code.gs
+
+ *   - BirthdayNotify.gs
+
+ *
+
+ * 1. Создайте новый проект Apps Script (или откройте существующий Ukrop)
+
+ * 2. Вставьте код из apps-script/
+
+ * 3. Укажите FILE_ID и ACCESS_CODE ниже
+
+ * 4. Project Settings → Script properties:
+
+ *      WHAPI_TOKEN = <токен Whapi>
+
+ * 5. Deploy → New deployment → Web app
+
+ *    - Execute as: Me
+
+ *    - Who has access: Anyone
+
+ * 6. Скопируйте URL в Ukrop/config.js → APPS_SCRIPT_URL
+
+ * 7. (опционально) Запустите setupBirthdayNotifyTrigger() один раз в редакторе
+
+ */
+
+
+
+// ID файла Укроп.graphml на Google Drive (из URL: drive.google.com/file/d/FILE_ID/...)
+
+const FILE_ID = '1kiX68XcMpdnabDZiHBdv0ZwH4GKtwZzQ';
+
+
+
+// Код доступа для семьи
+
+const ACCESS_CODE = 'alasha';
+
+
+
+function checkCode(code) {
+
+  return code && String(code).trim() === ACCESS_CODE;
+
+}
+
+
+
+function doGet(e) {
+
+  const params = e && e.parameter ? e.parameter : {};
+
+  const code = params.code;
+
+
+
+  if (!checkCode(code)) {
+
+    return jsonResponse({ ok: false, error: 'Неверный код доступа' });
+
+  }
+
+
+
+  if (params.action === 'load') {
+
+    try {
+
+      const file = DriveApp.getFileById(FILE_ID);
+
+      const content = file.getBlob().getDataAsString('UTF-8');
+
+      return ContentService
+
+        .createTextOutput(content)
+
+        .setMimeType(ContentService.MimeType.TEXT);
+
+    } catch (err) {
+
+      return jsonResponse({ ok: false, error: 'Не удалось прочитать файл: ' + err.message });
+
+    }
+
+  }
+
+
+
+  // WhatsApp: месяц (1-е число) + ежедневно. Логика из Whapi_Whatsapp.
+
+  // GET ?action=birthday_notify&code=alasha
+
+  // optional: preview=1 | force_monthly=1 | date=25.08.2026
+
+  if (params.action === 'birthday_notify') {
+
+    try {
+
+      return jsonResponse(runBirthdayNotify_(params));
+
+    } catch (err) {
+
+      return jsonResponse({ ok: false, error: 'birthday_notify: ' + err.message });
+
+    }
+
+  }
+
+
+
+  if (params.action === 'whatsapp_settings') {
+
+    try {
+
+      return jsonResponse({ ok: true, action: 'whatsapp_settings', settings: getWhatsAppSettings_() });
+
+    } catch (err) {
+
+      return jsonResponse({ ok: false, error: 'whatsapp_settings: ' + err.message });
+
+    }
+
+  }
+
+
+
+  return jsonResponse({ ok: true, message: 'Ukrop API работает' });
+
+}
+
+
+
+function doPost(e) {
+
+  let body;
+
+  try {
+
+    body = JSON.parse(e.postData.contents);
+
+  } catch (err) {
+
+    return jsonResponse({ ok: false, error: 'Неверный JSON' });
+
+  }
+
+
+
+  if (!checkCode(body.code)) {
+
+    return jsonResponse({ ok: false, error: 'Неверный код доступа' });
+
+  }
+
+
+
+  if (body.action === 'save' && body.content) {
+
+    try {
+
+      const file = DriveApp.getFileById(FILE_ID);
+
+      file.setContent(body.content);
+
+      return jsonResponse({ ok: true, action: 'save', message: 'Сохранено на Google Drive' });
+
+    } catch (err) {
+
+      return jsonResponse({ ok: false, error: 'Ошибка сохранения: ' + err.message });
+
+    }
+
+  }
+
+
+
+  if (body.action === 'whatsapp_settings_save') {
+
+    try {
+
+      const settings = saveWhatsAppSettings_(body.group, body.contacts);
+
+      return jsonResponse({ ok: true, action: 'whatsapp_settings_save', settings: settings });
+
+    } catch (err) {
+
+      return jsonResponse({ ok: false, error: 'Ошибка сохранения настроек: ' + err.message });
+
+    }
+
+  }
+
+
+
+  return jsonResponse({ ok: false, error: 'Неизвестное действие' });
+
+}
+
+
+
+function jsonResponse(obj) {
+
+  return ContentService
+
+    .createTextOutput(JSON.stringify(obj))
+
+    .setMimeType(ContentService.MimeType.JSON);
+
+}
+
+

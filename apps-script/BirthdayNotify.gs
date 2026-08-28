@@ -4,7 +4,7 @@
  * Script Properties (Project settings → Script properties):
  *   WHAPI_TOKEN = <token from Whapi>
  *
- * Optional overrides (comma-separated phones / group id):
+ * Optional overrides (editable in Ukrop UI → ⚙️ WhatsApp, or Script properties):
  *   WHATSAPP_GROUP = 120363267961302181@g.us
  *   WHATSAPP_CONTACTS = 77778090088,77771835265
  */
@@ -26,16 +26,33 @@ function getWhapiToken_() {
 
 function getWhatsAppGroup_() {
   var props = PropertiesService.getScriptProperties();
-  return String(props.getProperty('WHATSAPP_GROUP') || DEFAULT_WHATSAPP_GROUP).trim();
+  var raw = props.getProperty('WHATSAPP_GROUP');
+  if (raw === null) return DEFAULT_WHATSAPP_GROUP;
+  return String(raw).trim();
 }
 
 function getWhatsAppContacts_() {
   var props = PropertiesService.getScriptProperties();
   var raw = props.getProperty('WHATSAPP_CONTACTS');
-  if (!raw) return DEFAULT_WHATSAPP_CONTACTS.slice();
+  if (raw === null) return DEFAULT_WHATSAPP_CONTACTS.slice();
   return String(raw).split(',')
     .map(function (s) { return s.trim(); })
     .filter(Boolean);
+}
+
+function getWhatsAppSettings_() {
+  return {
+    group: getWhatsAppGroup_(),
+    contacts: getWhatsAppContacts_()
+  };
+}
+
+function saveWhatsAppSettings_(group, contacts) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('WHATSAPP_GROUP', String(group || '').trim());
+  var list = (contacts || []).map(function (s) { return String(s).trim(); }).filter(Boolean);
+  props.setProperty('WHATSAPP_CONTACTS', list.join(','));
+  return getWhatsAppSettings_();
 }
 
 function nowInAlmaty_() {
@@ -362,6 +379,7 @@ function runBirthdayNotify_(params) {
 
   var group = getWhatsAppGroup_();
   var contacts = getWhatsAppContacts_();
+  var monthlyRecipients = (group ? [group] : []).concat(contacts);
   var props = PropertiesService.getScriptProperties();
   var lastMonthly = props.getProperty('LAST_MONTHLY_SENT') || '';
 
@@ -378,7 +396,7 @@ function runBirthdayNotify_(params) {
       willSend: shouldMonthly,
       alreadySentThisMonth: lastMonthly === monthKey,
       body: monthlyBody,
-      recipients: [group].concat(contacts),
+      recipients: monthlyRecipients,
       results: []
     },
     daily: {
@@ -404,7 +422,7 @@ function runBirthdayNotify_(params) {
   }
 
   if (shouldMonthly && monthlyBody) {
-    result.monthly.results = sendToMany_([group].concat(contacts), monthlyBody, token);
+    result.monthly.results = sendToMany_(monthlyRecipients, monthlyBody, token);
     props.setProperty('LAST_MONTHLY_SENT', monthKey);
   }
 
