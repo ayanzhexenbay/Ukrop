@@ -96,7 +96,7 @@ function doGet(e) {
 
   // GET ?action=birthday_notify&code=alasha
 
-  // optional: preview=1 | force_monthly=1 | date=25.08.2026
+  // optional: preview=1 | force_monthly=1 | date=29.08.2026 | month=08.2026 | send=77778090088
 
   if (params.action === 'birthday_notify') {
 

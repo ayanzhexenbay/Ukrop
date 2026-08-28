@@ -74,12 +74,24 @@ function formatDdMmYyyy_(dt) {
   return dd + '.' + mm + '.' + dt.getFullYear();
 }
 
-function formatBirthDatePerson_(p) {
-  var birth = formatDdMmYyyy_(p.birthday);
-  if (p.dod) {
-    return '[' + birth + ' - ' + formatDdMmYyyy_(p.dod) + ']';
+var WA_DATE_SEP = '∙';
+
+function formatWaDateDots_(dt) {
+  if (!dt) return '';
+  var dd = ('0' + dt.getDate()).slice(-2);
+  var mm = ('0' + (dt.getMonth() + 1)).slice(-2);
+  return dd + WA_DATE_SEP + mm + WA_DATE_SEP + dt.getFullYear();
+}
+
+function formatBirthDatePerson_(p, year, includeAge) {
+  if (p.isDeceased && p.dod) {
+    return '[' + formatWaDateDots_(p.birthday) + ' - ' + formatWaDateDots_(p.dod) + ']';
   }
-  return birth;
+  var s = formatWaDateDots_(p.birthday);
+  if (includeAge && !p.isDeceased && year && p.birthday) {
+    s += '-' + (year - p.birthday.getFullYear()) + 'ж';
+  }
+  return s;
 }
 
 function findDescendantsByLocalName_(el, localName, out) {
@@ -237,16 +249,13 @@ function filterByDepth_(people, depth) {
 function appendMonthlySection_(sb, title, people, year, includeParent, includeAgeForLiving) {
   if (!people.length) return;
   sb.push('');
-  sb.push(title + ':');
+  sb.push('_' + title + ':_');
   people.forEach(function (person) {
     var line = (person.isDeceased ? '> ' : '* ') + person.name;
     if (includeParent && person.parentDisplayName) {
       line += ' (' + person.parentDisplayName + ')';
     }
-    line += ' - ' + formatBirthDatePerson_(person);
-    if (includeAgeForLiving && !person.isDeceased) {
-      line += ' - ' + (year - person.birthday.getFullYear()) + 'жас';
-    }
+    line += ' - `' + formatBirthDatePerson_(person, year, includeAgeForLiving) + '`';
     sb.push(line);
   });
 }
@@ -289,7 +298,7 @@ function generateMonthlyMessage_(people, year, month) {
     });
 
   var sb = [];
-  sb.push(year + ' ' + KZ_MONTHS[month - 1] + ' айындағы туған күндер:');
+  sb.push('*' + year + ' ' + KZ_MONTHS[month - 1] + ' айындағы туған күндер:*');
   appendMonthlySection_(sb, 'Ата-әже буыны', grandparents, year, false, false);
   appendMonthlySection_(sb, 'Үлкендер буыны', elders, year, false, false);
   appendMonthlySection_(sb, 'Жас Тумалар буыны', youngTumar, year, false, false);
@@ -313,7 +322,7 @@ function generateDailyMessage_(people, date) {
     .sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'kk'); });
 
   var sb = [];
-  sb.push('*' + formatDdMmYyyy_(date) + '* Бүгінгі туған күн иелерін құттықтаймыз:');
+  sb.push('*' + formatWaDateDots_(date) + '* Бүгінгі туған күн иелерін құттықтаймыз:');
   appendDailySection_(sb, 'Ата-әже буыны', grandparents, false);
   appendDailySection_(sb, 'Үлкендер буыны', elders, false);
   appendDailySection_(sb, 'Жас Тумалар буыны', youngTumar, false);
@@ -346,29 +355,78 @@ function sendToMany_(recipients, body, token) {
   });
 }
 
+function parseSendRecipients_(sendParam) {
+  if (!sendParam) return null;
+  return String(sendParam).split(',')
+    .map(function (s) { return s.trim(); })
+    .filter(Boolean);
+}
+
+function monthKey_(year, month) {
+  return year + '-' + ('0' + month).slice(-2);
+}
+
+function addMonths_(year, month, delta) {
+  var d = new Date(year, month - 1 + delta, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}
+
+function emptyMonthlySlot_(kind) {
+  return {
+    kind: kind,
+    planned: false,
+    willSend: false,
+    alreadySent: false,
+    targetMonth: null,
+    body: null,
+    recipients: [],
+    results: []
+  };
+}
+
 /**
- * Main entry: monthly (1st) + daily.
- * params: preview, force_monthly, date (dd.MM.yyyy)
+ * Main entry: monthly (1st + 25th advance) + daily.
+ * params:
+ *   preview=1
+ *   force_monthly=1
+ *   date=29.08.2026        — день (ежедневное сообщение; с send — только оно)
+ *   month=08.2026          — месяц (месячный список; с send — только оно)
+ *   send=77778090088       — отправить только на этот номер (или через запятую)
  */
 function runBirthdayNotify_(params) {
   params = params || {};
   var preview = String(params.preview || '') === '1' || String(params.preview || '').toLowerCase() === 'true';
   var forceMonthly = String(params.force_monthly || '') === '1'
     || String(params.force_monthly || '').toLowerCase() === 'true';
+  var sendOverride = parseSendRecipients_(params.send);
+  var mode = 'auto';
 
   var now = nowInAlmaty_();
-  if (params.date) {
+  if (params.month) {
+    var mp = String(params.month).match(/^(\d{1,2})\.(\d{4})$/);
+    if (!mp) {
+      return { ok: false, error: 'month должен быть MM.yyyy' };
+    }
+    var monthNum = +mp[1];
+    if (monthNum < 1 || monthNum > 12) {
+      return { ok: false, error: 'month: месяц должен быть 01–12' };
+    }
+    now = new Date(+mp[2], monthNum - 1, 1);
+    mode = 'monthly_only';
+    forceMonthly = true;
+  } else if (params.date) {
     var parts = String(params.date).match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
     if (!parts) {
       return { ok: false, error: 'date должен быть dd.MM.yyyy' };
     }
     now = new Date(+parts[3], +parts[2] - 1, +parts[1]);
+    if (sendOverride) mode = 'daily_only';
   }
 
   var year = now.getFullYear();
   var month = now.getMonth() + 1;
   var day = now.getDate();
-  var monthKey = year + '-' + ('0' + month).slice(-2);
+  var currentMonthKey = monthKey_(year, month);
 
   var file = DriveApp.getFileById(FILE_ID);
   var xml = file.getBlob().getDataAsString('UTF-8');
@@ -377,37 +435,76 @@ function runBirthdayNotify_(params) {
   var monthlyBody = generateMonthlyMessage_(people, year, month);
   var dailyBody = generateDailyMessage_(people, now);
 
+  var nextMonth = addMonths_(year, month, 1);
+  var nextMonthKey = monthKey_(nextMonth.year, nextMonth.month);
+  var monthlyAdvanceBody = generateMonthlyMessage_(people, nextMonth.year, nextMonth.month);
+
   var group = getWhatsAppGroup_();
   var contacts = getWhatsAppContacts_();
-  var monthlyRecipients = (group ? [group] : []).concat(contacts);
+  var defaultMonthlyRecipients = (group ? [group] : []).concat(contacts);
+  var monthlyRecipients = sendOverride || defaultMonthlyRecipients;
+  var dailyRecipients = sendOverride || contacts.slice();
+
   var props = PropertiesService.getScriptProperties();
   var lastMonthly = props.getProperty('LAST_MONTHLY_SENT') || '';
+  var lastAdvance = props.getProperty('LAST_MONTHLY_ADVANCE_SENT') || '';
 
-  var shouldMonthly = ((day === 1 && lastMonthly !== monthKey) || forceMonthly);
-  if (forceMonthly) shouldMonthly = true;
+  var shouldMonthlyCurrent = mode === 'monthly_only'
+    || (mode === 'auto' && day === 1 && lastMonthly !== currentMonthKey)
+    || (forceMonthly && mode === 'auto');
+  var shouldMonthlyAdvance = mode === 'auto'
+    && day === 25
+    && lastAdvance !== nextMonthKey;
+
+  var shouldDaily = mode === 'daily_only' || mode === 'auto';
+  var updateMonthlyCurrentFlag = shouldMonthlyCurrent && !preview && !sendOverride && mode === 'auto' && day === 1;
+  var updateMonthlyAdvanceFlag = shouldMonthlyAdvance && !preview && !sendOverride && mode === 'auto';
 
   var result = {
     ok: true,
     action: 'birthday_notify',
+    mode: mode,
     date: formatDdMmYyyy_(now),
     preview: preview,
+    sendOverride: sendOverride,
     monthly: {
-      planned: day === 1 || forceMonthly,
-      willSend: shouldMonthly,
-      alreadySentThisMonth: lastMonthly === monthKey,
+      kind: 'current',
+      planned: mode !== 'daily_only' && (mode === 'monthly_only' || day === 1 || forceMonthly),
+      willSend: shouldMonthlyCurrent && mode !== 'daily_only' && !!monthlyBody,
+      alreadySent: lastMonthly === currentMonthKey,
+      targetMonth: currentMonthKey,
       body: monthlyBody,
-      recipients: monthlyRecipients,
+      recipients: mode === 'daily_only' ? [] : monthlyRecipients,
+      results: []
+    },
+    monthlyAdvance: {
+      kind: 'advance',
+      planned: mode === 'auto' && day === 25,
+      willSend: shouldMonthlyAdvance && mode === 'auto' && !!monthlyAdvanceBody,
+      alreadySent: lastAdvance === nextMonthKey,
+      targetMonth: nextMonthKey,
+      body: monthlyAdvanceBody,
+      recipients: mode === 'auto' ? monthlyRecipients : [],
       results: []
     },
     daily: {
-      planned: true,
-      willSend: !!dailyBody,
+      planned: mode !== 'monthly_only',
+      willSend: shouldDaily && mode !== 'monthly_only' && !!dailyBody,
       body: dailyBody || null,
-      recipients: contacts.slice(),
+      recipients: mode === 'monthly_only' ? [] : dailyRecipients,
       results: [],
-      skipped: !dailyBody ? 'Нет именинников сегодня' : null
+      skipped: mode === 'monthly_only'
+        ? 'Режим month=MM.yyyy'
+        : (!dailyBody ? 'Нет именинников сегодня' : null)
     }
   };
+
+  if (mode === 'daily_only') {
+    result.monthlyAdvance = emptyMonthlySlot_('advance');
+  }
+  if (mode === 'monthly_only') {
+    result.monthlyAdvance = emptyMonthlySlot_('advance');
+  }
 
   if (preview) {
     return result;
@@ -421,13 +518,18 @@ function runBirthdayNotify_(params) {
     };
   }
 
-  if (shouldMonthly && monthlyBody) {
+  if (shouldMonthlyCurrent && monthlyBody && mode !== 'daily_only') {
     result.monthly.results = sendToMany_(monthlyRecipients, monthlyBody, token);
-    props.setProperty('LAST_MONTHLY_SENT', monthKey);
+    if (updateMonthlyCurrentFlag) props.setProperty('LAST_MONTHLY_SENT', currentMonthKey);
   }
 
-  if (dailyBody) {
-    result.daily.results = sendToMany_(contacts, dailyBody, token);
+  if (shouldMonthlyAdvance && monthlyAdvanceBody && mode === 'auto') {
+    result.monthlyAdvance.results = sendToMany_(monthlyRecipients, monthlyAdvanceBody, token);
+    if (updateMonthlyAdvanceFlag) props.setProperty('LAST_MONTHLY_ADVANCE_SENT', nextMonthKey);
+  }
+
+  if (shouldDaily && dailyBody && mode !== 'monthly_only') {
+    result.daily.results = sendToMany_(dailyRecipients, dailyBody, token);
   }
 
   return result;
